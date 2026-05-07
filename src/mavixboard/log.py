@@ -1,6 +1,6 @@
 import logging
 
-from mavixboard.config import settings
+from mavixboard.core.config import settings
 
 settings.log_path.parent.mkdir(parents=True, exist_ok=True)
 

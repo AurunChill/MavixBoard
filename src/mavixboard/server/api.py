@@ -4,7 +4,7 @@ from enum import StrEnum
 
 import aiohttp
 
-from mavixboard.config import settings
+from mavixboard.core.config import settings
 from mavixboard.log import logger
 
 
@@ -19,10 +19,20 @@ class ApiSession:
 
     @classmethod
     async def create(cls) -> ApiSession:
+        """Create a new ApiSession with a fresh aiohttp ClientSession.
+
+        Returns:
+            ApiSession instance ready for requests.
+        """
         session = aiohttp.ClientSession()
         return cls(session)
 
     async def connection_check(self) -> bool:
+        """Check if the server is reachable and healthy.
+
+        Returns:
+            True if server responds with status 'ok', False otherwise.
+        """
         url = settings.signal_server_ip + API_ROUTES.HEALTH_CHECK
         try:
             async with self.session.get(url) as resp:
@@ -32,6 +42,11 @@ class ApiSession:
             return False
 
     async def send_register(self, drone_token: str) -> bool:
+        """Register the drone on the server using its token.
+
+        Returns:
+            True if server responded with 201 and all expected fields present.
+        """
         url = settings.signal_server_ip + API_ROUTES.DRONE_REGISTER
         payload = {'user_id': settings.user_id, 'drone_id': drone_token}
         try:

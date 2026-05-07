@@ -1,4 +1,4 @@
-from mavixboard.config import settings
+from mavixboard.core.config import settings
 
 TOKEN_PATH = settings.token_path
 

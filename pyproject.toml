@@ -18,6 +18,8 @@ dependencies = [
 dev = [
     "pytest>=8.0",
     "pytest-cov>=5.0",
+    "pytest-asyncio>=0.23",
+    "aioresponses>=0.7",
     "ruff>=0.9",
     "mypy>=1.10",
 ]
@@ -26,6 +28,8 @@ dev = [
 dev-dependencies = [
     "pytest>=8.0",
     "pytest-cov>=5.0",
+    "pytest-asyncio>=0.23",
+    "aioresponses>=0.7",
     "ruff>=0.9",
     "mypy>=1.10",
 ]
@@ -44,6 +48,7 @@ known-first-party = ["mavixboard"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "--cov=src --cov-report=term-missing"
+asyncio_mode = "auto"
 
 [tool.mypy]
 python_version = "3.11"

@@ -1,6 +1,6 @@
 import pytest
 import mavixboard.token.storage as storage
-from mavixboard.config import settings
+from mavixboard.core.config import settings
 
 
 @pytest.fixture(autouse=True)
