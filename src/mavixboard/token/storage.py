@@ -1,4 +1,6 @@
-from mavixboard.config import TOKEN_PATH
+from mavixboard.config import settings
+
+TOKEN_PATH = settings.token_path
 
 
 def get() -> str:
