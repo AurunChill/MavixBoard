@@ -72,11 +72,40 @@ chmod 600 ~/.config/mavixboard/token
 ### API
 
 ```python
-from mavixboard.token import store
+from mavixboard.token import storage
 
-store.write("your_token")  # записать токен на диск
-token = store.get()        # прочитать токен ('' если файла нет)
+storage.write('your_token')  # записать токен на диск
+token = storage.get()        # прочитать токен ('' если файла нет)
 ```
+
+---
+
+## Регистрация дрона
+
+При каждом запуске программа отправляет запрос на регистрацию дрона на сервер.
+
+**Endpoint:** `POST /api/v1/drones/register`
+
+**Тело запроса:**
+
+```json
+{
+  "user_id": "<USER_ID из .env>",
+  "drone_id": "<64-символьный hex токен дрона>"
+}
+```
+
+**Ожидаемый ответ (201):**
+
+```json
+{
+  "drone_id": "...",
+  "user_id": "...",
+  "drone_token": "..."
+}
+```
+
+Регистрация считается успешной только при статусе `201` и наличии всех трёх полей в ответе. В остальных случаях логируется предупреждение.
 
 ---
 

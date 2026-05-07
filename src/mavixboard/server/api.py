@@ -53,7 +53,7 @@ class ApiSession:
             async with self.session.post(url, json=payload) as resp:
                 if resp.status == 201:
                     data = await resp.json()
-                    ok = all(k in data for k in ('status', 'drone_id', 'registered_at'))
+                    ok = all(k in data for k in ('drone_id', 'user_id', 'drone_token'))
                     if not ok:
                         logger.warning("register: missing fields in response: %s", data)
                     return ok

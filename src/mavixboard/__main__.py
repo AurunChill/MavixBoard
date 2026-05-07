@@ -21,7 +21,7 @@ async def main():
                 logger.error(f'Register error :(')
         else:
             logger.error(f'Server is not reachable!')
-            asyncio.sleep(1)
+        await asyncio.sleep(5)
 
-    
+
 asyncio.run(main())
