@@ -5,7 +5,7 @@ from enum import StrEnum
 import aiohttp
 
 from mavixboard.core.config import settings
-from mavixboard.log import logger
+from mavixboard.core.logger import logger
 
 
 class API_ROUTES(StrEnum):
@@ -26,6 +26,10 @@ class ApiSession:
         """
         session = aiohttp.ClientSession()
         return cls(session)
+
+    async def close(self) -> None:
+        """Close the underlying aiohttp ClientSession."""
+        await self.session.close()
 
     async def connection_check(self) -> bool:
         """Check if the server is reachable and healthy.

@@ -109,6 +109,51 @@ token = storage.get()        # прочитать токен ('' если фай
 
 ---
 
+## Трансляция видео (GStreamer)
+
+Видеопоток с USB-камер передаётся по WebRTC через GStreamer.
+
+> **Поддерживаются только USB-камеры (V4L2).** CSI-камеры (например, Camera Module для Raspberry Pi) не поддерживаются.
+
+### Требования
+
+```bash
+sudo apt install gstreamer1.0-tools gstreamer1.0-plugins-base \
+    gstreamer1.0-plugins-good gstreamer1.0-plugins-bad \
+    gstreamer1.0-plugins-ugly gstreamer1.0-libav \
+    python3-gi gir1.2-gst-plugins-base-1.0 v4l-utils
+```
+
+### Архитектура
+
+| Компонент | Описание |
+|---|---|
+| `V4l2Scanner` | Сканирует устройства через `v4l2-ctl`, определяет поддерживаемые форматы и разрешения |
+| `CameraCalibrator` | Проверяет каждый режим камеры запуском GStreamer-пайплайна — исключает нерабочие режимы |
+| `CameraRegistry` | Кэширует список камер, сохраняет конфигурацию в `_data/<name>.json` |
+| `PipelineBuilder` | Строит строку GStreamer-пайплайна для WebRTC-трансляции |
+| `GStreamerPipe` | Управляет пайплайном: запуск, остановка, динамическое изменение битрейта |
+
+### Поддерживаемые форматы
+
+- `YUYV` (YUY2) — сырой формат без сжатия
+- `MJPG` (Motion JPEG) — аппаратное сжатие камеры
+
+Все форматы перекодируются в H.264 (`x264enc`) и передаются по RTP внутри WebRTC.
+
+### WebRTC: STUN и TURN
+
+STUN и TURN серверы задаются в `.env`:
+
+```
+STUN_SERVER=stun://your-server:3478
+TURN_SERVER=turn://user:password@your-server:3478
+```
+
+TURN опционален — если не задан, используется только STUN. Оба значения подставляются в WebRTC-пайплайн автоматически.
+
+---
+
 ## Дистрибуция
 
 MavixBoard распространяется через сайт Mavix. Токен пользователя (`USER_ID`) вшивается в дистрибутив автоматически при скачивании.

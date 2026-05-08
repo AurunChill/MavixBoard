@@ -9,9 +9,9 @@ from mavixboard.server.api import API_ROUTES, ApiSession
 BASE_URL = "http://test"
 
 FULL_REGISTER_RESPONSE = {
-    "status": "registered",
     "drone_id": "abc123",
-    "registered_at": "2024-01-01T00:00:00",
+    "user_id": "user456",
+    "drone_token": "tok789",
 }
 
 
@@ -25,6 +25,14 @@ async def api():
     s = aiohttp.ClientSession()
     yield ApiSession(s)
     await s.close()
+
+
+class TestClose:
+    async def test_close_closes_session(self):
+        mock_session = aiohttp.ClientSession()
+        api_session = ApiSession(mock_session)
+        await api_session.close()
+        assert mock_session.closed is True
 
 
 class TestConnectionCheck:

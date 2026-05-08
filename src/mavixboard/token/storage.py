@@ -19,5 +19,4 @@ def write(token: str) -> None:
     """
     if not isinstance(token, str):
         raise TypeError(f"token must be str, got {type(token).__name__}")
-    TOKEN_PATH.parent.mkdir(parents=True, exist_ok=True)
     TOKEN_PATH.write_text(token)
