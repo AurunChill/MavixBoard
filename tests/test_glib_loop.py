@@ -8,8 +8,6 @@ integration concern verified on real hardware).
 """
 from __future__ import annotations
 
-import pytest
-
 from mavixboard.core.glib_loop import GLibMainLoopThread
 
 
