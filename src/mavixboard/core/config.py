@@ -5,6 +5,15 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+# Load env in priority order:
+#   1. /etc/mavixboard/preset.env — installed by the .deb on a real drone;
+#      contains USER_ID and any system-wide settings the server baked in
+#      at build time. Loaded WITHOUT override so a local .env on a dev
+#      machine still wins for everything except what's locked.
+#   2. ./.env (project local) — development override.
+_PRESET_PATH = Path('/etc/mavixboard/preset.env')
+if _PRESET_PATH.is_file():
+    load_dotenv(_PRESET_PATH, override=False)
 load_dotenv(override=True)
 
 _BASE = Path.home() / '.config' / 'mavixboard'
