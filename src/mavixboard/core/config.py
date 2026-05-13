@@ -25,6 +25,13 @@ class Settings:
     signal_server_ip: str = field(default_factory=lambda: os.getenv('SIGNAL_SERVER_IP', 'http://localhost'))
     signal_ws_url: str = field(default_factory=lambda: os.getenv('SIGNAL_WS_URL', ''))
     user_id: str = field(default_factory=lambda: os.getenv('USER_ID', ''))
+    # DRONE_ID / DRONE_TOKEN are baked into /etc/mavixboard/preset.env at
+    # .deb build time by the server. When both are set, the board uses
+    # DRONE_TOKEN for WS auth and skips on-boot registration (the server
+    # has already enrolled the drone). For dev runs without the .deb,
+    # both are empty and __main__ falls back to the local token file.
+    drone_id: str = field(default_factory=lambda: os.getenv('DRONE_ID', ''))
+    drone_token: str = field(default_factory=lambda: os.getenv('DRONE_TOKEN', ''))
     stun_server: str = field(default_factory=lambda: os.getenv('STUN_SERVER', 'stun://localhost:3478'))
     turn_server: str = field(default_factory=lambda: os.getenv('TURN_SERVER', ''))
 

@@ -66,3 +66,46 @@ def test_local_env_overrides_preset(tmp_path, monkeypatch):
     load_dotenv(preset, override=False)
     load_dotenv(local, override=True)
     assert os.environ.get('USER_ID') == 'local-user-abc'
+
+
+# ---------- DRONE_ID / DRONE_TOKEN from preset.env ----------
+# The server bakes these into preset.env at .deb build time. Settings
+# must read them so the board can use DRONE_TOKEN for WS auth instead
+# of a locally-generated random token (which the server doesn't know).
+
+def test_drone_token_and_drone_id_read_from_env(monkeypatch):
+    monkeypatch.setenv('DRONE_ID', 'd-from-env')
+    monkeypatch.setenv('DRONE_TOKEN', 'tok-from-env')
+    s = Settings()
+    assert s.drone_id == 'd-from-env'
+    assert s.drone_token == 'tok-from-env'
+
+
+def test_drone_token_defaults_empty_in_dev(monkeypatch):
+    """No preset.env, no local .env → both stay empty so __main__ falls
+    back to local file generation."""
+    monkeypatch.delenv('DRONE_ID', raising=False)
+    monkeypatch.delenv('DRONE_TOKEN', raising=False)
+    s = Settings()
+    assert s.drone_id == ''
+    assert s.drone_token == ''
+
+
+def test_drone_token_loaded_from_preset_env_file(tmp_path, monkeypatch):
+    """preset.env content reaches Settings via dotenv."""
+    from dotenv import load_dotenv
+    preset = tmp_path / 'preset.env'
+    preset.write_text(
+        'USER_ID=u-1\n'
+        'DRONE_ID=d-1\n'
+        'DRONE_TOKEN=tok-1\n'
+        'SIGNAL_SERVER_IP=http://srv:8000\n'
+    )
+    for key in ('USER_ID', 'DRONE_ID', 'DRONE_TOKEN', 'SIGNAL_SERVER_IP'):
+        monkeypatch.delenv(key, raising=False)
+    load_dotenv(preset, override=False)
+    s = Settings()
+    assert s.user_id == 'u-1'
+    assert s.drone_id == 'd-1'
+    assert s.drone_token == 'tok-1'
+    assert s.signal_server_ip == 'http://srv:8000'

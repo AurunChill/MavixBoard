@@ -47,19 +47,42 @@ async def _ensure_registered(api_session: api.ApiSession, token: str) -> bool:
         await asyncio.sleep(5)
 
 
-async def main() -> None:
-    _init_dirs()
+async def _resolve_drone_token() -> str:
+    """Decide which token to use for WS auth.
+
+    Production path (.deb-installed): preset.env populates settings.drone_token
+    (and DRONE_ID) — the server has already created the Drone row, so we
+    just use the baked-in token and skip the on-boot register call.
+
+    Dev path (no preset.env): generate a token locally, persist it, and
+    register on every boot (drone_service.register is idempotent for the
+    same drone_id, so this is safe across restarts).
+    """
+    if settings.drone_token:
+        logger.info('using DRONE_TOKEN from preset.env (drone_id=%s)', settings.drone_id or '<unset>')
+        return settings.drone_token
 
     token = storage.get()
     if not token:
         token = generator.generate(length=64)
         storage.write(token)
 
+    # Dev-only: phone home so a Drone row exists. With auth now enforced
+    # on /drones/register we'd need a user JWT — in dev that means a
+    # separate `mavixboard-enroll` script (out of scope here); for the
+    # common case where the .deb path is used this branch is not hit.
     api_session = await api.ApiSession.create()
     try:
         await _ensure_registered(api_session, token)
     finally:
         await api_session.close()
+    return token
+
+
+async def main() -> None:
+    _init_dirs()
+
+    token = await _resolve_drone_token()
 
     fc_service = FCService()
     await fc_service.start()

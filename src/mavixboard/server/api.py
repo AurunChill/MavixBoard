@@ -46,13 +46,28 @@ class ApiSession:
             return False
 
     async def send_register(self, drone_token: str) -> bool:
-        """Register the drone on the server using its token.
+        """Register this drone on the server.
 
-        Returns:
-            True if server responded with 201 and all expected fields present.
+        DEV-PATH ONLY. The production .deb flow has the drone already
+        registered server-side at build time — the server bakes its
+        DRONE_ID and DRONE_TOKEN into preset.env, and the board reads
+        them on boot (see __main__._resolve_drone_token).
+
+        In dev there's no preset.env, so the board falls back to a
+        locally-generated token. It identifies itself with that token
+        as the drone_id and trusts the server to mint a server-side
+        drone_token for it — except the new auth-protected endpoint
+        will reject this call (no user JWT). This branch is kept for
+        compatibility with old deployments and CI fixtures that
+        explicitly pre-create the Drone row; production won't hit it.
+
+        Returns True only if server responded 201 with full payload.
         """
         url = settings.signal_server_ip + API_ROUTES.DRONE_REGISTER
-        payload = {'user_id': settings.user_id, 'drone_id': drone_token}
+        # Use settings.drone_id if set (early preset.env adoption), else
+        # the dev-generated token doubles as the identifier.
+        drone_id = settings.drone_id or drone_token
+        payload = {'user_id': settings.user_id, 'drone_id': drone_id}
         try:
             async with self.session.post(url, json=payload) as resp:
                 if resp.status == 201:
@@ -61,7 +76,7 @@ class ApiSession:
                     if not ok:
                         logger.warning("register: missing fields in response: %s", data)
                     return ok
-                logger.warning("register failed: status %s", resp.status)
+                logger.warning("register failed: status %s (expected for dev path without user JWT)", resp.status)
                 return False
         except aiohttp.ClientError as e:
             logger.error("register request error: %s", e)
