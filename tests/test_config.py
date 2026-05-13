@@ -109,3 +109,51 @@ def test_drone_token_loaded_from_preset_env_file(tmp_path, monkeypatch):
     assert s.drone_id == 'd-1'
     assert s.drone_token == 'tok-1'
     assert s.signal_server_ip == 'http://srv:8000'
+
+
+# ---------- Log / data path resolution ----------
+# Source-tree runs use _PROJECT_ROOT/_log and _data; .deb installs set
+# MAVIXBOARD_LOG_DIR / MAVIXBOARD_DATA_DIR via systemd to writable
+# locations under /var. Without env var AND without the dev tree, fall
+# back to XDG ~/.local paths.
+
+def test_log_dir_env_override_wins(monkeypatch, tmp_path):
+    from mavixboard.core import config
+    monkeypatch.setenv('MAVIXBOARD_LOG_DIR', str(tmp_path / 'custom-logs'))
+    assert config._resolve_log_dir() == tmp_path / 'custom-logs'
+
+
+def test_data_dir_env_override_wins(monkeypatch, tmp_path):
+    from mavixboard.core import config
+    monkeypatch.setenv('MAVIXBOARD_DATA_DIR', str(tmp_path / 'custom-data'))
+    assert config._resolve_data_dir() == tmp_path / 'custom-data'
+
+
+def test_log_dir_uses_project_root_in_source_tree(monkeypatch):
+    """When the tree is recognized (pyproject.toml found by walking up),
+    keep the legacy in-tree _log path for backward compatibility."""
+    from mavixboard.core import config
+    monkeypatch.delenv('MAVIXBOARD_LOG_DIR', raising=False)
+    if config._PROJECT_ROOT is None:
+        import pytest
+        pytest.skip('not running from source tree')
+    assert config._resolve_log_dir() == config._PROJECT_ROOT / '_log'
+
+
+def test_log_dir_falls_back_to_xdg_when_not_in_source_tree(monkeypatch):
+    """When run from an installed package (.deb path) — no pyproject.toml
+    on the parent chain — log directory must be a writable user-local path,
+    not the read-only system install dir."""
+    from mavixboard.core import config
+    monkeypatch.delenv('MAVIXBOARD_LOG_DIR', raising=False)
+    monkeypatch.setattr(config, '_PROJECT_ROOT', None)
+    expected = config.Path.home() / '.local' / 'state' / 'mavixboard'
+    assert config._resolve_log_dir() == expected
+
+
+def test_data_dir_falls_back_to_xdg_when_not_in_source_tree(monkeypatch):
+    from mavixboard.core import config
+    monkeypatch.delenv('MAVIXBOARD_DATA_DIR', raising=False)
+    monkeypatch.setattr(config, '_PROJECT_ROOT', None)
+    expected = config.Path.home() / '.local' / 'share' / 'mavixboard'
+    assert config._resolve_data_dir() == expected

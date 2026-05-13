@@ -17,7 +17,50 @@ if _PRESET_PATH.is_file():
 load_dotenv(override=True)
 
 _BASE = Path.home() / '.config' / 'mavixboard'
-_PROJECT_ROOT = Path(__file__).parents[2]
+
+
+def _find_project_root() -> Path | None:
+    """Walk up from this file to find the dev source tree's pyproject.toml.
+    Returns None when run from an installed package (no marker found)."""
+    cur = Path(__file__).resolve().parent
+    for _ in range(6):
+        if (cur / 'pyproject.toml').is_file():
+            return cur
+        if cur.parent == cur:
+            return None
+        cur = cur.parent
+    return None
+
+
+_PROJECT_ROOT = _find_project_root()
+
+
+def _resolve_log_dir() -> Path:
+    """Pick a writable directory for log files.
+
+    .deb installations set MAVIXBOARD_LOG_DIR=/var/log/mavixboard via the
+    systemd unit (writable for the mavixboard user). Dev runs from the
+    source tree get <project>/_log. Falling back to ~/.local/state
+    handles the case of `python -m mavixboard` from an installed package
+    without the systemd env.
+    """
+    env_override = os.getenv('MAVIXBOARD_LOG_DIR')
+    if env_override:
+        return Path(env_override)
+    if _PROJECT_ROOT is not None:
+        return _PROJECT_ROOT / '_log'
+    return Path.home() / '.local' / 'state' / 'mavixboard'
+
+
+def _resolve_data_dir() -> Path:
+    """Same logic as _resolve_log_dir but for runtime data
+    (camera calibration cache, etc)."""
+    env_override = os.getenv('MAVIXBOARD_DATA_DIR')
+    if env_override:
+        return Path(env_override)
+    if _PROJECT_ROOT is not None:
+        return _PROJECT_ROOT / '_data'
+    return Path.home() / '.local' / 'share' / 'mavixboard'
 
 
 @dataclass
@@ -36,8 +79,8 @@ class Settings:
     turn_server: str = field(default_factory=lambda: os.getenv('TURN_SERVER', ''))
 
     token_path: Path = _BASE / 'token'
-    log_path: Path = field(default_factory=lambda: _PROJECT_ROOT / '_log' / f'mavixboard_{date.today()}.log')
-    data_path: Path = _PROJECT_ROOT / '_data'
+    log_path: Path = field(default_factory=lambda: _resolve_log_dir() / f'mavixboard_{date.today()}.log')
+    data_path: Path = field(default_factory=_resolve_data_dir)
 
     @property
     def ws_url(self) -> str:
