@@ -276,7 +276,37 @@ async def test_watcher_callback_sends_cameras_changed_via_config():
         'type': 'cameras_changed',
         'device_indices': [0, 1, 2],
     })
-    coord._teardown()
+
+
+async def test_watcher_callback_tears_down_session():
+    sc = _make_signal_client()
+    pipeline = _make_pipeline_mock()
+    watcher = MagicMock()
+    coord = SessionCoordinator(sc, MagicMock(return_value=pipeline), watcher=watcher)
+    coord._loop = asyncio.get_running_loop()
+    await coord._handle_connect('gcs-1')
+    assert coord._manager is not None
+
+    coord._on_cameras_changed({99})
+    await asyncio.sleep(0.02)
+
+    pipeline.stop.assert_called_once()
+    assert coord._manager is None
+    assert coord._pipeline is None
+
+
+async def test_watcher_callback_sends_disconnect_session_to_server():
+    sc = _make_signal_client()
+    pipeline = _make_pipeline_mock()
+    watcher = MagicMock()
+    coord = SessionCoordinator(sc, MagicMock(return_value=pipeline), watcher=watcher)
+    coord._loop = asyncio.get_running_loop()
+    await coord._handle_connect('gcs-1')
+
+    coord._on_cameras_changed({0})
+    await asyncio.sleep(0.02)
+
+    sc.send.assert_any_await({'type': 'disconnect_session'})
 
 
 async def test_watcher_callback_no_session_is_noop():

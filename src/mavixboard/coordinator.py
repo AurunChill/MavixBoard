@@ -188,10 +188,19 @@ class SessionCoordinator:
         os.execv(sys.executable, [sys.executable, *sys.argv])
 
     def _on_cameras_changed(self, new_ids: set[int]) -> None:
-        logger.info('[coord] cameras changed: %s', sorted(new_ids))
-        if self._manager is None or self._manager.channels is None:
+        logger.info('[coord] cameras changed: %s, tearing down session', sorted(new_ids))
+        if self._manager is None:
             return
-        self._manager.channels.config.send_json({
-            'type': 'cameras_changed',
-            'device_indices': sorted(new_ids),
-        })
+        if self._manager.channels is not None:
+            self._manager.channels.config.send_json({
+                'type': 'cameras_changed',
+                'device_indices': sorted(new_ids),
+            })
+        # Tell server to drop the peer pair and notify GCS, then teardown locally.
+        # New pipeline is built on next 'connect' from server with current cameras.
+        assert self._loop is not None
+        asyncio.run_coroutine_threadsafe(
+            self._signal_client.send({'type': 'disconnect_session'}),
+            self._loop,
+        )
+        self._teardown()
