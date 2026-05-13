@@ -214,14 +214,19 @@ class SessionCoordinator:
     def _on_pipeline_error(self) -> None:
         """Called by GStreamerPipe bus watch when the pipeline emits ERROR.
 
-        Strategy: drop the peer session entirely. The new pipeline will be
-        built when the GCS reconnects (server sends 'connect' again). This
-        mirrors cameras_changed handling and avoids the fragile
-        "rebuild webrtcbin in place" path from the legacy code.
+        First send an error notice to the GCS via the config-channel so the
+        UI can tell the pilot, then drop the peer session entirely. The new
+        pipeline will be built when the GCS reconnects (server sends
+        'connect' again).
         """
         logger.warning('[coord] pipeline error, tearing down session')
         if self._manager is None:
             return
+        if self._manager.channels is not None and self._manager.channels.config is not None:
+            self._manager.channels.config.send_json({
+                'type': 'error',
+                'message': 'pipeline_error',
+            })
         assert self._loop is not None
         asyncio.run_coroutine_threadsafe(
             self._signal_client.send({'type': 'disconnect_session'}),

@@ -353,6 +353,21 @@ async def test_pipeline_error_sends_disconnect_session_to_server():
     sc.send.assert_any_await({'type': 'disconnect_session'})
 
 
+async def test_pipeline_error_pushes_error_message_to_config_channel():
+    sc = _make_signal_client()
+    pipeline = _make_pipeline_mock()
+    coord = SessionCoordinator(sc, MagicMock(return_value=pipeline))
+    coord._loop = asyncio.get_running_loop()
+    await coord._handle_connect('gcs-1')
+    config_ch = coord._manager.channels.config
+    config_ch.send_json = MagicMock()
+
+    coord._on_pipeline_error()
+    await asyncio.sleep(0.02)
+
+    config_ch.send_json.assert_called_once_with({'type': 'error', 'message': 'pipeline_error'})
+
+
 async def test_pipeline_error_without_session_is_noop():
     sc = _make_signal_client()
     coord = SessionCoordinator(sc, MagicMock())
