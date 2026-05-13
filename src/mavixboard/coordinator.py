@@ -121,7 +121,7 @@ class SessionCoordinator:
             fc_service=self._fc_service,
         )
         pipeline.start()
-        self._manager.start_session(gcs_id)
+        self._manager.start_session(gcs_id, cameras=pipeline.cameras)
         if self._manager.channels is not None:
             self._manager.channels.config.on_message = self._on_config_message
         if self._watcher is not None:

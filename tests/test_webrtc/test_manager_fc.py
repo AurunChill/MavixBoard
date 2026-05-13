@@ -170,6 +170,9 @@ async def test_config_channel_sends_fc_info_on_open():
 
 
 async def test_config_channel_sends_none_when_no_fc():
+    """When the manager has no FC service, it still announces 'fc:none' on
+    config-channel open so the GCS knows the FC slot is empty."""
+    import json
     webrtc = _make_webrtc_mock()
     send = AsyncMock()
     mgr = WebRTCManager(webrtc, asyncio.get_running_loop(), send)
@@ -178,9 +181,13 @@ async def test_config_channel_sends_none_when_no_fc():
     _open_channel(config_ch_mock)
     mgr.channels.config._on_state(config_ch_mock, None)
 
-    # No FC service → channel should still send 'none' info? With fc_service=None
-    # the on_open wiring is skipped; config_ch.emit is not called.
-    config_ch_mock.emit.assert_not_called()
+    sent_messages = [
+        json.loads(c.args[1].decode('utf-8'))
+        for c in config_ch_mock.emit.call_args_list
+        if len(c.args) >= 2 and c.args[0] == 'send-data'
+    ]
+    fc_msgs = [m for m in sent_messages if m.get('type') == 'fc']
+    assert fc_msgs == [{'type': 'fc', 'kind': 'none', 'name': ''}]
     mgr.end_session()
 
 
@@ -196,6 +203,71 @@ async def test_end_session_closes_channels():
     assert hub.packet.is_open is False
     assert hub.ping.is_open is False
     assert hub.config.is_open is False
+
+
+async def test_cameras_sent_on_config_open():
+    """When the config channel opens, the manager pushes the camera list."""
+    import json
+
+    webrtc = _make_webrtc_mock()
+    send = AsyncMock()
+    mgr = WebRTCManager(webrtc, asyncio.get_running_loop(), send)
+
+    cam = MagicMock()
+    cam.device_index = 0
+    cam.name = 'cam0'
+    cam.bitrate_kbs = 1000
+    cam.params = []
+    cam.param_index = 0
+    # Use dataclasses-asdict-friendly via __dataclass_fields__
+    import dataclasses
+    @dataclasses.dataclass
+    class _Cam:
+        device_index: int = 0
+        name: str = 'cam0'
+        bitrate_kbs: int = 1000
+        param_index: int = 0
+        params: list = dataclasses.field(default_factory=list)
+
+    mgr.start_session('gcs-1', cameras=[_Cam()])
+    config_ch_mock = webrtc._channels[2]
+    _open_channel(config_ch_mock)
+    mgr.channels.config._on_state(config_ch_mock, None)
+
+    # We sent two messages: fc + cameras
+    sent_messages = [
+        json.loads(c.args[1].decode('utf-8'))
+        for c in config_ch_mock.emit.call_args_list
+        if len(c.args) >= 2 and c.args[0] == 'send-data'
+    ]
+    types = [m.get('type') for m in sent_messages]
+    assert 'cameras' in types
+    cameras_msg = next(m for m in sent_messages if m['type'] == 'cameras')
+    assert cameras_msg['cameras'] == [
+        {'device_index': 0, 'name': 'cam0', 'bitrate_kbs': 1000, 'param_index': 0, 'params': []}
+    ]
+    mgr.end_session()
+
+
+async def test_no_cameras_message_when_list_empty():
+    """If no cameras provided, only fc is sent (cameras-list is omitted)."""
+    import json
+    webrtc = _make_webrtc_mock()
+    send = AsyncMock()
+    mgr = WebRTCManager(webrtc, asyncio.get_running_loop(), send)
+    mgr.start_session('gcs-1', cameras=None)
+    config_ch_mock = webrtc._channels[2]
+    _open_channel(config_ch_mock)
+    mgr.channels.config._on_state(config_ch_mock, None)
+
+    sent_messages = [
+        json.loads(c.args[1].decode('utf-8'))
+        for c in config_ch_mock.emit.call_args_list
+        if len(c.args) >= 2 and c.args[0] == 'send-data'
+    ]
+    types = [m.get('type') for m in sent_messages]
+    assert 'cameras' not in types
+    mgr.end_session()
 
 
 async def test_replacing_session_rewires_fc():

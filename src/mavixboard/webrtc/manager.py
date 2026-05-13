@@ -8,6 +8,8 @@ import gi
 gi.require_version('Gst', '1.0')
 from gi.repository import Gst
 
+import dataclasses
+
 from mavixboard.core.logger import logger
 from mavixboard.fc.service import FCService
 from mavixboard.webrtc.channels import DataChannelHub
@@ -28,6 +30,7 @@ class WebRTCManager:
         self._fc_service = fc_service
         self._peer: PeerSession | None = None
         self._channels: DataChannelHub | None = None
+        self._cameras: list = []
         self._ice_pump_task: asyncio.Task | None = None
         self._offer_pump_task: asyncio.Task | None = None
         self.on_session_ended: Callable[[], None] | None = None
@@ -40,13 +43,14 @@ class WebRTCManager:
     def channels(self) -> DataChannelHub | None:
         return self._channels
 
-    def start_session(self, gcs_id: str) -> None:
+    def start_session(self, gcs_id: str, cameras: list | None = None) -> None:
         if self._peer is not None:
             logger.warning('[manager] session already active (gcs=%s), ending before new one', self._peer.gcs_id)
             self.end_session()
         logger.info('[manager] starting session with gcs=%s', gcs_id)
         self._peer = PeerSession(gcs_id, self._webrtc, self._loop)
         self._channels = DataChannelHub(self._webrtc)
+        self._cameras = list(cameras) if cameras else []
         self._wire_channels()
         self._ice_pump_task = self._loop.create_task(self._pump_ice())
         self._offer_pump_task = self._loop.create_task(self._pump_offer())
@@ -70,14 +74,14 @@ class WebRTCManager:
             self.on_session_ended()
 
     def _wire_channels(self) -> None:
-        if self._channels is None or self._fc_service is None:
+        if self._channels is None:
             return
-        # FC → GCS: every FC packet goes through packet data-channel
-        self._fc_service.set_packet_callback(self._channels.packet.send_bytes)
-        # GCS → FC: every packet from data-channel is forwarded to FC
-        self._channels.packet.on_packet = self._forward_to_fc
-        # Send FC info as soon as config channel opens
-        self._channels.config.on_open = self._send_fc_info
+        # FC ↔ GCS bidirectional pipe through packet data-channel (if FC is up)
+        if self._fc_service is not None:
+            self._fc_service.set_packet_callback(self._channels.packet.send_bytes)
+            self._channels.packet.on_packet = self._forward_to_fc
+        # Send FC info + cameras list as soon as config channel opens
+        self._channels.config.on_open = self._send_config_open
 
     def _unwire_channels(self) -> None:
         if self._fc_service is not None:
@@ -92,6 +96,12 @@ class WebRTCManager:
             return
         asyncio.run_coroutine_threadsafe(self._fc_service.send(data), self._loop)
 
+    def _send_config_open(self) -> None:
+        """Called when the config data-channel transitions to OPEN. Pushes
+        the initial state the GCS needs: FC info + camera list."""
+        self._send_fc_info()
+        self._send_cameras()
+
     def _send_fc_info(self) -> None:
         if self._channels is None:
             return
@@ -103,6 +113,16 @@ class WebRTCManager:
             'kind': self._fc_service.kind or 'none',
             'name': self._fc_service.name,
         })
+
+    def _send_cameras(self) -> None:
+        if self._channels is None or not self._cameras:
+            return
+        try:
+            payload = [dataclasses.asdict(cam) for cam in self._cameras]
+        except TypeError:
+            # In case a non-dataclass camera object sneaks in
+            payload = [getattr(cam, '__dict__', {}) for cam in self._cameras]
+        self._channels.config.send_json({'type': 'cameras', 'cameras': payload})
 
     async def handle_sdp(self, gcs_id: str, sdp_data: dict) -> None:
         if not self._guard(gcs_id):
