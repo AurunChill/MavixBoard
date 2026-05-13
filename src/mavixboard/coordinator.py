@@ -88,6 +88,8 @@ class SessionCoordinator:
                 await self._handle_ice(msg)
             case 'error':
                 logger.warning('[coord] server error: %s', msg.get('message'))
+            case 'ping':
+                await self._signal_client.send({'type': 'pong'})
             case 'pong':
                 pass
             case _:

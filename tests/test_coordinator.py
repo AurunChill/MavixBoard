@@ -166,6 +166,16 @@ async def test_on_message_dispatches_by_type():
     coord._teardown()
 
 
+async def test_on_message_ping_replies_with_pong():
+    sc = _make_signal_client()
+    coord = SessionCoordinator(sc, MagicMock())
+    coord._loop = asyncio.get_running_loop()
+
+    await coord._on_message({'type': 'ping'})
+
+    sc.send.assert_awaited_once_with({'type': 'pong'})
+
+
 async def test_run_reconnects_on_connection_loss():
     """Coordinator should reconnect after listen exits, but stop after stop() is called."""
     import websockets
