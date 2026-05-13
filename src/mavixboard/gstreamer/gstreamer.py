@@ -13,6 +13,7 @@ from mavixboard.core.logger import logger
 
 class GStreamerPipe:
     def __init__(self, cameras: list['Camera']) -> None:
+        self.cameras: list['Camera'] = cameras
         self.pipeline: Gst.Pipeline = Gst.parse_launch(
             pipeline_description=PipelineBuilder.build_pipeline_description(cameras)
         )
