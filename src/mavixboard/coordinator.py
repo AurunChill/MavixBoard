@@ -7,6 +7,7 @@ from collections.abc import Callable
 
 import websockets
 
+from mavixboard.core.backoff import ExponentialBackoff
 from mavixboard.core.logger import logger
 from mavixboard.fc.service import FCService
 from mavixboard.gstreamer.gstreamer import GStreamerPipe
@@ -24,13 +25,13 @@ class SessionCoordinator:
         pipeline_factory: PipelineFactory,
         fc_service: FCService | None = None,
         watcher: CameraWatcher | None = None,
-        reconnect_delay: float = 1.0,
+        backoff: ExponentialBackoff | None = None,
     ) -> None:
         self._signal_client = signal_client
         self._pipeline_factory = pipeline_factory
         self._fc_service = fc_service
         self._watcher = watcher
-        self._reconnect_delay = reconnect_delay
+        self._backoff = backoff if backoff is not None else ExponentialBackoff()
         self._loop: asyncio.AbstractEventLoop | None = None
         self._pipeline: GStreamerPipe | None = None
         self._manager: WebRTCManager | None = None
@@ -42,9 +43,12 @@ class SessionCoordinator:
         while not self._stop_event.is_set():
             connected = await self._signal_client.connect()
             if not connected:
-                await asyncio.sleep(self._reconnect_delay)
+                delay = self._backoff.next_delay()
+                logger.info('[coord] connect failed, retry in %.1fs', delay)
+                await asyncio.sleep(delay)
                 continue
             logger.info('[coord] connected to signal server')
+            self._backoff.reset()
             try:
                 await self._signal_client.listen(self._on_message)
             except websockets.exceptions.ConnectionClosed as exc:
@@ -54,7 +58,8 @@ class SessionCoordinator:
             finally:
                 self._teardown()
                 await self._signal_client.disconnect()
-            await asyncio.sleep(self._reconnect_delay)
+            delay = self._backoff.next_delay()
+            await asyncio.sleep(delay)
 
     def stop(self) -> None:
         if self._stop_event is not None:

@@ -180,12 +180,15 @@ async def test_run_reconnects_on_connection_loss():
     """Coordinator should reconnect after listen exits, but stop after stop() is called."""
     import websockets
 
+    from mavixboard.core.backoff import ExponentialBackoff
+
     sc = _make_signal_client()
     sc.listen.side_effect = [
         websockets.exceptions.ConnectionClosed(None, None),
         websockets.exceptions.ConnectionClosed(None, None),
     ]
-    coord = SessionCoordinator(sc, MagicMock(return_value=None), reconnect_delay=0.01)
+    backoff = ExponentialBackoff(initial=0.01, multiplier=1.0, cap=0.01)
+    coord = SessionCoordinator(sc, MagicMock(return_value=None), backoff=backoff)
 
     task = asyncio.create_task(coord.run())
     await asyncio.sleep(0.1)
@@ -197,3 +200,55 @@ async def test_run_reconnects_on_connection_loss():
 
     assert sc.connect.await_count >= 2
     assert sc.disconnect.await_count >= 2
+
+
+async def test_run_uses_backoff_on_connect_failure():
+    """Failed connects should bump the backoff delay."""
+    from mavixboard.core.backoff import ExponentialBackoff
+
+    sc = _make_signal_client()
+    sc.connect = AsyncMock(return_value=False)  # always fail
+    backoff = ExponentialBackoff(initial=0.02, multiplier=2.0, cap=0.05)
+    coord = SessionCoordinator(sc, MagicMock(return_value=None), backoff=backoff)
+
+    task = asyncio.create_task(coord.run())
+    await asyncio.sleep(0.2)
+    coord.stop()
+    try:
+        await asyncio.wait_for(task, timeout=1.0)
+    except asyncio.TimeoutError:
+        task.cancel()
+
+    assert sc.connect.await_count >= 2
+    # After several failures, backoff should be at the cap
+    assert backoff.current == 0.05
+
+
+async def test_run_resets_backoff_on_success():
+    """A successful connect resets the backoff."""
+    import websockets
+
+    from mavixboard.core.backoff import ExponentialBackoff
+
+    sc = _make_signal_client()
+    sc.connect = AsyncMock(return_value=True)
+
+    async def listen_then_close(_cb):
+        raise websockets.exceptions.ConnectionClosed(None, None)
+
+    sc.listen = AsyncMock(side_effect=listen_then_close)
+    backoff = ExponentialBackoff(initial=0.02, multiplier=2.0, cap=1.0)
+    backoff._current = 0.5  # pretend we already escalated
+    coord = SessionCoordinator(sc, MagicMock(return_value=None), backoff=backoff)
+
+    task = asyncio.create_task(coord.run())
+    await asyncio.sleep(0.05)
+    coord.stop()
+    try:
+        await asyncio.wait_for(task, timeout=1.0)
+    except asyncio.TimeoutError:
+        task.cancel()
+
+    # After successful connect, backoff was reset to initial (0.02), then next_delay
+    # bumped it to 0.04. Should be far below the original 0.5.
+    assert backoff.current < 0.5
