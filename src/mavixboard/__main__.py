@@ -1,4 +1,5 @@
 import asyncio
+import signal
 
 import gi
 
@@ -9,6 +10,7 @@ Gst.init(None)
 
 from mavixboard.coordinator import SessionCoordinator
 from mavixboard.core.config import settings
+from mavixboard.core.glib_loop import GLibMainLoopThread
 from mavixboard.core.logger import logger, setup_file_logging
 from mavixboard.fc.service import FCService
 from mavixboard.gstreamer.camera import CameraManager
@@ -82,6 +84,12 @@ async def _resolve_drone_token() -> str:
 async def main() -> None:
     _init_dirs()
 
+    # The GLib main loop must be running BEFORE any GStreamer pipeline is
+    # built — Gst.Bus.add_watch and GLib.idle_add only fire while it
+    # iterates, and asyncio does not pump the GLib default context.
+    glib = GLibMainLoopThread()
+    glib.start()
+
     token = await _resolve_drone_token()
 
     fc_service = FCService()
@@ -95,10 +103,27 @@ async def main() -> None:
         fc_service=fc_service,
         watcher=watcher,
     )
+
+    # systemd sends SIGTERM on stop; SIGINT comes from Ctrl+C in dev.
+    # Both should trigger a graceful shutdown of the coordinator (which
+    # owns the pipeline / data channels / FC link), then the GLib loop.
+    loop = asyncio.get_running_loop()
+    def _request_stop() -> None:
+        logger.info('shutdown signal received; stopping coordinator')
+        coordinator.stop()
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            loop.add_signal_handler(sig, _request_stop)
+        except (NotImplementedError, RuntimeError):
+            # Not all platforms support add_signal_handler; tests on
+            # threads-with-no-default-loop hit the RuntimeError branch.
+            pass
+
     try:
         await coordinator.run()
     finally:
         await fc_service.stop()
+        glib.stop()
 
 
 if __name__ == '__main__':
