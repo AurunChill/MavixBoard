@@ -183,31 +183,7 @@ fswebcam -d /dev/video0 photo.jpg
 scp rpi@mavixboard.local:~/photo.jpg ~/photo.jpg
 ```
 
-**CSI-камера (rpicam / libcamera):**
-
-Сборка libcamera:
-```bash
-sudo apt install -y git python3-pip meson cmake ninja-build build-essential \
-    libboost-dev libgnutls28-dev libtiff5-dev pybind11-dev \
-    python3-yaml python3-ply libglib2.0-dev libgstreamer-plugins-base1.0-dev \
-    libdrm-dev libexif-dev libjpeg-dev libpng-dev v4l-utils
-
-git clone https://github.com/raspberrypi/libcamera.git && cd libcamera
-meson setup build --buildtype=release \
-    -Dpipelines=rpi/vc4,rpi/pisp -Dipas=rpi/vc4,rpi/pisp \
-    -Dv4l2=true -Dgstreamer=enabled -Dtest=false \
-    -Dlc-compliance=disabled -Dcam=disabled -Dqcam=disabled -Ddocumentation=disabled
-ninja -C build && sudo ninja -C build install
-echo "/usr/local/lib/aarch64-linux-gnu" | sudo tee /etc/ld.so.conf.d/rpicam.conf
-sudo ldconfig
-```
-
-Сборка rpicam-apps:
-```bash
-git clone https://github.com/raspberrypi/rpicam-apps.git && cd rpicam-apps
-meson setup build -Denable_libav=disabled -Denable_drm=enabled -Denable_egl=disabled
-ninja -C build && sudo ninja -C build install && sudo ldconfig
-```
+> CSI-камеры (через `libcamera` / `rpicam`) в текущей версии не поддерживаются — используйте только USB-камеры.
 
 ### 1.5 UART для CRSF-полётника
 
@@ -270,7 +246,7 @@ sudo apt-get install -y \
     gstreamer1.0-plugins-good gstreamer1.0-plugins-bad \
     gstreamer1.0-plugins-ugly gstreamer1.0-libav \
     gstreamer1.0-plugins-rtp gstreamer1.0-x \
-    gstreamer1.0-nice gstreamer1.0-libcamera libcamera-v4l2 \
+    gstreamer1.0-nice \
     libcairo2-dev libgirepository1.0-dev
 ```
 

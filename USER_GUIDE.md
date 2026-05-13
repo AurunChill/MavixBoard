@@ -35,7 +35,7 @@
 ### 3.1. Минимальный состав технических средств
 
 - бортовой компьютер: Raspberry Pi 4 (4 ГБ ОЗУ) или аналогичный;
-- USB- или CSI-камера (одна или несколько);
+- USB-камера (одна или несколько; CSI-камеры не поддерживаются);
 - полётный контроллер с поддержкой протокола MAVLink или CRSF;
 - модуль связи с интернетом (LTE-модем, Wi-Fi);
 - источник питания, обеспечивающий не менее 3 А при 5 В.
@@ -353,9 +353,10 @@ mmcli -m 0                       # уровень сигнала, операто
 journalctl -u ModemManager -f
 ```
 
-### 6.3. Подключение камеры
+### 6.3. Подключение USB-камеры
 
-#### 6.3.1. USB-камера
+Поддерживаются только USB-камеры (UVC). CSI-камеры (через `libcamera`/
+`rpicam`) в текущей версии не поддерживаются.
 
 ```bash
 lsusb                       # камера видна на USB
@@ -367,41 +368,6 @@ ls -l /dev/video*           # определить порт
 ```bash
 sudo apt install -y fswebcam
 fswebcam -d /dev/video0 ~/photo.jpg
-```
-
-#### 6.3.2. CSI-камера (rpicam / libcamera)
-
-Для использования CSI-камеры с GStreamer необходимо собрать libcamera
-из исходных кодов с поддержкой GStreamer:
-
-```bash
-sudo apt install -y git python3-pip meson cmake ninja-build build-essential \
-    libboost-dev libgnutls28-dev libtiff5-dev pybind11-dev \
-    python3-yaml python3-ply libglib2.0-dev libgstreamer-plugins-base1.0-dev \
-    libdrm-dev libexif-dev libjpeg-dev libpng-dev v4l-utils
-
-git clone https://github.com/raspberrypi/libcamera.git
-cd libcamera
-meson setup build --buildtype=release \
-    -Dpipelines=rpi/vc4,rpi/pisp -Dipas=rpi/vc4,rpi/pisp \
-    -Dv4l2=true -Dgstreamer=enabled -Dtest=false \
-    -Dlc-compliance=disabled -Dcam=disabled -Dqcam=disabled -Ddocumentation=disabled
-ninja -C build
-sudo ninja -C build install
-echo "/usr/local/lib/aarch64-linux-gnu" | sudo tee /etc/ld.so.conf.d/rpicam.conf
-sudo ldconfig
-```
-
-Сборка `rpicam-apps`:
-
-```bash
-cd ~
-git clone https://github.com/raspberrypi/rpicam-apps.git
-cd rpicam-apps
-meson setup build -Denable_libav=disabled -Denable_drm=enabled -Denable_egl=disabled
-ninja -C build
-sudo ninja -C build install
-sudo ldconfig
 ```
 
 ### 6.4. Настройка UART для CRSF-полётников
