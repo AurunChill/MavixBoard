@@ -113,6 +113,7 @@ class SessionCoordinator:
             return
         assert self._loop is not None
         self._pipeline = pipeline
+        pipeline.on_error = self._on_pipeline_error
         self._manager = WebRTCManager(
             pipeline.webrtc_elem,
             self._loop,
@@ -203,6 +204,24 @@ class SessionCoordinator:
             })
         # Tell server to drop the peer pair and notify GCS, then teardown locally.
         # New pipeline is built on next 'connect' from server with current cameras.
+        assert self._loop is not None
+        asyncio.run_coroutine_threadsafe(
+            self._signal_client.send({'type': 'disconnect_session'}),
+            self._loop,
+        )
+        self._teardown()
+
+    def _on_pipeline_error(self) -> None:
+        """Called by GStreamerPipe bus watch when the pipeline emits ERROR.
+
+        Strategy: drop the peer session entirely. The new pipeline will be
+        built when the GCS reconnects (server sends 'connect' again). This
+        mirrors cameras_changed handling and avoids the fragile
+        "rebuild webrtcbin in place" path from the legacy code.
+        """
+        logger.warning('[coord] pipeline error, tearing down session')
+        if self._manager is None:
+            return
         assert self._loop is not None
         asyncio.run_coroutine_threadsafe(
             self._signal_client.send({'type': 'disconnect_session'}),

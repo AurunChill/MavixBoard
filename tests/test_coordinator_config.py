@@ -309,6 +309,58 @@ async def test_watcher_callback_sends_disconnect_session_to_server():
     sc.send.assert_any_await({'type': 'disconnect_session'})
 
 
+# ============================================================================
+# Pipeline error
+# ============================================================================
+
+async def test_pipeline_error_hook_is_installed_on_connect():
+    sc = _make_signal_client()
+    pipeline = _make_pipeline_mock()
+    coord = SessionCoordinator(sc, MagicMock(return_value=pipeline))
+    coord._loop = asyncio.get_running_loop()
+    await coord._handle_connect('gcs-1')
+
+    assert pipeline.on_error == coord._on_pipeline_error
+    coord._teardown()
+
+
+async def test_pipeline_error_tears_down_session():
+    sc = _make_signal_client()
+    pipeline = _make_pipeline_mock()
+    coord = SessionCoordinator(sc, MagicMock(return_value=pipeline))
+    coord._loop = asyncio.get_running_loop()
+    await coord._handle_connect('gcs-1')
+    assert coord._manager is not None
+
+    coord._on_pipeline_error()
+    await asyncio.sleep(0.02)
+
+    pipeline.stop.assert_called_once()
+    assert coord._manager is None
+    assert coord._pipeline is None
+
+
+async def test_pipeline_error_sends_disconnect_session_to_server():
+    sc = _make_signal_client()
+    pipeline = _make_pipeline_mock()
+    coord = SessionCoordinator(sc, MagicMock(return_value=pipeline))
+    coord._loop = asyncio.get_running_loop()
+    await coord._handle_connect('gcs-1')
+
+    coord._on_pipeline_error()
+    await asyncio.sleep(0.02)
+
+    sc.send.assert_any_await({'type': 'disconnect_session'})
+
+
+async def test_pipeline_error_without_session_is_noop():
+    sc = _make_signal_client()
+    coord = SessionCoordinator(sc, MagicMock())
+    coord._loop = asyncio.get_running_loop()
+    coord._on_pipeline_error()  # no exception
+    sc.send.assert_not_called()
+
+
 async def test_watcher_callback_no_session_is_noop():
     sc = _make_signal_client()
     coord = SessionCoordinator(sc, MagicMock(), watcher=MagicMock())
