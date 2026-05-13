@@ -1,15 +1,15 @@
 from __future__ import annotations
 
 import asyncio
-import os
-import sys
 from collections.abc import Callable
 
 import websockets
 
 from mavixboard.core.backoff import ExponentialBackoff
+from mavixboard.core.config import settings
 from mavixboard.core.logger import logger
 from mavixboard.fc.service import FCService
+from mavixboard.gstreamer.camera import CameraManager
 from mavixboard.gstreamer.gstreamer import GStreamerPipe
 from mavixboard.gstreamer.watcher import CameraWatcher
 from mavixboard.server.signal_client import SignalClient
@@ -122,7 +122,23 @@ class SessionCoordinator:
             self._signal_client.send,
             fc_service=self._fc_service,
         )
-        pipeline.start()
+        # Wait for the pipeline to actually reach PLAYING before creating
+        # data channels. If v4l2_open fails (camera unplugged between scan
+        # and pipeline.start, /dev/videoN not yet ready after udev), the
+        # bus posts ERROR which schedules _on_pipeline_error on the GLib
+        # thread. Running it concurrently with manager.start_session would
+        # trip `gst_webrtc_bin_create_data_channel: is_closed != TRUE`
+        # because webrtcbin gets torn down while channels are being created.
+        if not pipeline.start():
+            logger.error('[coord] pipeline failed to reach PLAYING; aborting session')
+            try:
+                pipeline.stop()
+            except Exception as exc:
+                logger.debug('[coord] pipeline stop after failed start: %s', exc)
+            self._pipeline = None
+            self._manager = None
+            CameraManager.clear_cache()
+            return
         self._manager.start_session(gcs_id, cameras=pipeline.cameras)
         if self._manager.channels is not None:
             self._manager.channels.config.on_message = self._on_config_message
@@ -151,9 +167,8 @@ class SessionCoordinator:
             logger.warning('[coord] config message must be an object, got %s', type(payload).__name__)
             return
         match payload.get('type'):
-            case 'reboot':
-                assert self._loop is not None
-                self._loop.create_task(self._reboot())
+            case 'calibrate':
+                self._force_calibrate()
             case 'bitrate':
                 self._apply_bitrate_updates(payload.get('updates', []))
             case 'params':
@@ -237,19 +252,45 @@ class SessionCoordinator:
             except Exception as exc:
                 logger.warning('[coord] camera save error: %s', exc)
 
-    async def _reboot(self) -> None:
-        logger.info('[coord] reboot requested via config channel')
-        try:
-            self._teardown()
-            if self._fc_service is not None:
-                await self._fc_service.stop()
-            await self._signal_client.disconnect()
-        except Exception as exc:
-            logger.warning('[coord] reboot cleanup error: %s', exc)
-        os.execv(sys.executable, [sys.executable, *sys.argv])
+    def _force_calibrate(self) -> None:
+        """Drop saved camera calibrations and tear down the session so the
+        next pipeline build re-runs the full GStreamer probing loop for
+        every device. The GCS auto-reconnects → _build_pipeline → _scan;
+        Camera.get returns None for each device (.json removed) → falls
+        through to CameraCalibrator.calibrate."""
+        logger.info('[coord] full re-calibration requested via config channel')
+        cameras = list(self._pipeline.cameras) if self._pipeline is not None else []
+        if not cameras:
+            cameras = CameraManager.get_cameras()
+        for cam in cameras:
+            path = settings.data_path / f'{cam.name}.json'
+            try:
+                path.unlink(missing_ok=True)
+                logger.info('[coord] removed saved calibration: %s', path)
+            except OSError as exc:
+                logger.warning('[coord] failed to remove %s: %s', path, exc)
+        CameraManager.clear_cache()
+        if self._manager is None:
+            return
+        assert self._loop is not None
+        asyncio.run_coroutine_threadsafe(
+            self._signal_client.send({'type': 'disconnect_session'}),
+            self._loop,
+        )
+        self._teardown()
 
     def _on_cameras_changed(self, new_ids: set[int]) -> None:
         logger.info('[coord] cameras changed: %s, tearing down session', sorted(new_ids))
+        # Invalidate the in-memory camera cache FIRST, before any short-circuit
+        # below — _on_pipeline_error may have torn down the manager already
+        # (camera unplugged → v4l2 read fails → pipeline error fires before
+        # the watcher's 5s poll). If clear_cache is gated behind a non-None
+        # manager check, the next pipeline build sees stale cache, tries to
+        # reopen the unplugged device, errors again, and the session loops
+        # without ever recovering. _scan reuses *.json on disk for any
+        # device whose name still matches; only genuinely new devices get
+        # re-calibrated.
+        CameraManager.clear_cache()
         if self._manager is None:
             return
         if self._manager.channels is not None:
@@ -275,6 +316,12 @@ class SessionCoordinator:
         'connect' again).
         """
         logger.warning('[coord] pipeline error, tearing down session')
+        # The most common pipeline error in practice is a v4l2 read failing
+        # because the camera got unplugged. Drop the in-memory camera cache
+        # so the rebuild after auto-reconnect re-scans /dev/video* and skips
+        # the missing device — otherwise force_update=False returns stale
+        # cache and the pipeline errors again in a tight loop.
+        CameraManager.clear_cache()
         if self._manager is None:
             return
         if self._manager.channels is not None and self._manager.channels.config is not None:

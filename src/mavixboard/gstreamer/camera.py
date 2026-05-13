@@ -187,6 +187,17 @@ class CameraRegistry:
             name = device_names[device_path]
             saved = Camera.get(name)
             if saved and not force_update:
+                # The saved JSON has the device_index from a previous run;
+                # after a USB unplug+replug the kernel may reassign the
+                # camera to a different /dev/videoN. Refresh the index to
+                # the *current* path so the pipeline opens the right node,
+                # and persist so subsequent loads have the up-to-date value.
+                if saved.device_index != device_index:
+                    saved.device_index = device_index
+                    try:
+                        saved.save()
+                    except OSError as exc:
+                        logger.warning('camera save error: %s', exc)
                 cameras.append(saved)
                 continue
             raw_params = self.scanner.parse_camera_params(device_path)

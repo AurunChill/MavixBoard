@@ -29,7 +29,12 @@ def _init_dirs() -> None:
 
 
 def _build_pipeline() -> GStreamerPipe | None:
-    cameras = CameraManager.get_cameras(force_update=True)
+    # force_update=False: re-use cached calibration when the device name
+    # matches a previously-saved Camera (~/.local/share/mavixboard/<name>.json).
+    # If a different camera is plugged in (new name) or the cache was cleared
+    # by CameraWatcher detecting a device-set change, CameraRegistry._scan
+    # falls through to calibration for that specific device.
+    cameras = CameraManager.get_cameras(force_update=False)
     if not cameras:
         logger.error('cameras not found')
         return None

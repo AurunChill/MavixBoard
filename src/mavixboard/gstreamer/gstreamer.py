@@ -24,10 +24,20 @@ class GStreamerPipe:
         self.bus_.add_watch(GLib.PRIORITY_DEFAULT, self.on_bus_message, self)
         self.stopped_: bool = False
 
-    def start(self) -> None:
+    def start(self, timeout_seconds: float = 3.0) -> bool:
+        """Bring the pipeline to PLAYING and block until the state-change
+        actually completes (or fails). Returns True on success.
+
+        The caller MUST check the return value: if the pipeline fails to
+        reach PLAYING (e.g. v4l2 device unplugged between scan and start),
+        creating WebRTC data channels on the half-destroyed webrtcbin
+        would trip a GStreamer assertion (`is_closed != TRUE`).
+        """
         if self.webrtc_elem:
             self.webrtc_elem.set_property('latency', 0)
         self.pipeline.set_state(Gst.State.PLAYING)
+        ret, state, _ = self.pipeline.get_state(int(timeout_seconds * Gst.SECOND))
+        return ret == Gst.StateChangeReturn.SUCCESS and state == Gst.State.PLAYING
 
     def stop(self) -> None:
         if self.stopped_:
