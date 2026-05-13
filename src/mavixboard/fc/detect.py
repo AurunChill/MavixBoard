@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import time
 
 import serial
@@ -30,6 +31,8 @@ async def detect(
     crsf_timeout: float = 2.0,
 ) -> FlightController | None:
     for port in ports:
+        if not os.path.exists(port):
+            continue
         ctrl = await _try_mavlink(port, mavlink_baud, mavlink_timeout)
         if ctrl is not None:
             return ctrl

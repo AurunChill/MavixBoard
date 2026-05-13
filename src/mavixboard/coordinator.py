@@ -65,6 +65,8 @@ class SessionCoordinator:
         if self._stop_event is not None:
             self._stop_event.set()
         self._teardown()
+        if self._loop is not None:
+            self._loop.create_task(self._signal_client.disconnect())
 
     def _teardown(self) -> None:
         if self._watcher is not None:
@@ -154,8 +156,61 @@ class SessionCoordinator:
                 self._loop.create_task(self._reboot())
             case 'bitrate':
                 self._apply_bitrate_updates(payload.get('updates', []))
+            case 'params':
+                self._apply_params_updates(payload.get('updates', []))
             case _:
                 logger.warning('[coord] unknown config message type: %s', payload.get('type'))
+
+    def _apply_params_updates(self, updates) -> None:
+        """Persist a new param_index per camera, then tear down the session.
+
+        Resolution/FPS are baked into the GStreamer caps at pipeline build
+        time; there's no clean way to change them on a running pipeline.
+        Persisting + dropping the peer makes the GCS reconnect, and the
+        next pipeline build picks up the new param_index from Camera.get
+        in CameraRegistry._scan.
+        """
+        if not isinstance(updates, list) or self._pipeline is None:
+            return
+        cameras = self._pipeline.cameras
+        changed = False
+        for update in updates:
+            if not isinstance(update, dict):
+                continue
+            device_index = update.get('device_index')
+            param_index = update.get('param_index')
+            if not isinstance(device_index, int) or not isinstance(param_index, int):
+                continue
+            cam = next((c for c in cameras if c.device_index == device_index), None)
+            if cam is None:
+                logger.warning('[coord] params update for unknown device_index=%s', device_index)
+                continue
+            if param_index < 0 or param_index >= len(cam.params):
+                logger.warning('[coord] params update with out-of-range param_index=%s for device_index=%s',
+                               param_index, device_index)
+                continue
+            if cam.param_index == param_index:
+                continue
+            cam.param_index = param_index
+            try:
+                cam.save()
+            except Exception as exc:
+                logger.warning('[coord] camera save error: %s', exc)
+            changed = True
+        if not changed:
+            return
+        logger.info('[coord] params changed, tearing down session for renegotiation')
+        if self._manager is not None and self._manager.channels is not None:
+            cfg = self._manager.channels.config
+            if cfg is not None:
+                cfg.send_json({'type': 'cameras_changed',
+                               'device_indices': sorted(c.device_index for c in cameras)})
+        assert self._loop is not None
+        asyncio.run_coroutine_threadsafe(
+            self._signal_client.send({'type': 'disconnect_session'}),
+            self._loop,
+        )
+        self._teardown()
 
     def _apply_bitrate_updates(self, updates) -> None:
         if not isinstance(updates, list) or self._pipeline is None:

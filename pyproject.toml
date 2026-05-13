@@ -16,7 +16,7 @@ dependencies = [
     "pyserial>=3.5",
     "pyserial-asyncio>=0.6",
     "pymavlink>=2.4",
-    "PyGObject>=3.44",
+    "PyGObject>=3.44,<3.50",
 ]
 
 [project.optional-dependencies]
