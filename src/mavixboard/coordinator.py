@@ -80,6 +80,19 @@ class SessionCoordinator:
             except Exception as exc:
                 logger.warning('[coord] pipeline stop error: %s', exc)
             self._pipeline = None
+        if self._fc_service is not None:
+            self._fc_service.set_change_callback(None)
+
+    def _on_fc_change(self, kind: str | None, name: str) -> None:
+        """Fired by FCService when the FC controller appears/disappears.
+        Push a fresh `fc` config message so the GCS UI updates without
+        waiting for the next session restart."""
+        if self._manager is None:
+            return
+        try:
+            self._manager.notify_fc_changed()
+        except Exception as exc:
+            logger.warning('[coord] notify_fc_changed error: %s', exc)
 
     async def _on_message(self, msg: dict) -> None:
         kind = msg.get('type')
@@ -109,7 +122,13 @@ class SessionCoordinator:
         if self._pipeline is not None:
             logger.info('[coord] existing session active, tearing down before new one')
             self._teardown()
-        pipeline = self._pipeline_factory()
+        # pipeline_factory may run a multi-second GStreamer calibration loop;
+        # pipeline.start blocks on get_state(PLAYING). Both are sync and must
+        # NOT run on the asyncio loop directly — otherwise _pump_offer can't
+        # ship the SDP and signal_client.listen can't ack pings, and the
+        # server kicks the drone WS after WS_PING_TIMEOUT (45s) thinking the
+        # drone died. Run them via asyncio.to_thread to keep the loop free.
+        pipeline = await asyncio.to_thread(self._pipeline_factory)
         if pipeline is None or pipeline.webrtc_elem is None:
             logger.error('[coord] pipeline factory returned no pipeline; aborting session')
             return
@@ -129,7 +148,7 @@ class SessionCoordinator:
         # thread. Running it concurrently with manager.start_session would
         # trip `gst_webrtc_bin_create_data_channel: is_closed != TRUE`
         # because webrtcbin gets torn down while channels are being created.
-        if not pipeline.start():
+        if not await asyncio.to_thread(pipeline.start):
             logger.error('[coord] pipeline failed to reach PLAYING; aborting session')
             try:
                 pipeline.stop()
@@ -142,6 +161,13 @@ class SessionCoordinator:
         self._manager.start_session(gcs_id, cameras=pipeline.cameras)
         if self._manager.channels is not None:
             self._manager.channels.config.on_message = self._on_config_message
+        if self._fc_service is not None:
+            # FCService fires this whenever the FC controller appears or
+            # disappears mid-session (e.g. user plugs the FC in after the
+            # WebRTC session is up). manager._send_fc_info only runs once
+            # on data-channel open — without re-firing it here, the GCS
+            # would never learn about a hot-plugged FC.
+            self._fc_service.set_change_callback(self._on_fc_change)
         if self._watcher is not None:
             initial_ids = {cam.device_index for cam in pipeline.cameras}
             self._watcher.start(initial_ids, self._on_cameras_changed)

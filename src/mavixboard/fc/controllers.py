@@ -89,9 +89,27 @@ class MavlinkController:
 
     async def _read_loop(self) -> None:
         logger.info('[mavlink] read loop started')
+        # Count consecutive recv failures. pyserial's "device reports
+        # readiness to read but returned no data" repeatedly fires when
+        # the FC is unplugged — without a circuit-breaker the loop spins
+        # at 100% CPU spamming logs. After a few in a row we close the
+        # controller so FCService's scan loop picks up the disconnection.
+        consecutive_errors = 0
+        ERROR_THRESHOLD = 5
         try:
             while not self._closed:
-                msg = await asyncio.to_thread(self._recv_one)
+                msg, errored = await asyncio.to_thread(self._recv_one)
+                if errored:
+                    consecutive_errors += 1
+                    if consecutive_errors >= ERROR_THRESHOLD:
+                        logger.info('[mavlink] %d consecutive recv errors, closing controller',
+                                    consecutive_errors)
+                        self._closed = True
+                        break
+                    # Brief sleep so we don't tight-loop on a busted device.
+                    await asyncio.sleep(0.1)
+                    continue
+                consecutive_errors = 0
                 if msg is None:
                     continue
                 raw = msg.get_msgbuf()
@@ -110,12 +128,13 @@ class MavlinkController:
         finally:
             logger.info('[mavlink] read loop stopped')
 
-    def _recv_one(self):
+    def _recv_one(self) -> tuple[object | None, bool]:
+        """Return (msg, errored). msg may be None even on success (timeout)."""
         try:
-            return self._conn.recv_match(blocking=True, timeout=0.1)
+            return self._conn.recv_match(blocking=True, timeout=0.1), False
         except Exception as exc:
             logger.debug('[mavlink] recv_match error: %s', exc)
-            return None
+            return None, True
 
 
 class CrsfController:

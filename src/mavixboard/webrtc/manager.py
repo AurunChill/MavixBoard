@@ -114,6 +114,12 @@ class WebRTCManager:
             'name': self._fc_service.name,
         })
 
+    def notify_fc_changed(self) -> None:
+        """Public hook so the coordinator can push a fresh `fc` config
+        message after a hot-plug/unplug — _send_config_open only fires
+        once when the data-channel opens."""
+        self._send_fc_info()
+
     def _send_cameras(self) -> None:
         if self._channels is None or not self._cameras:
             return

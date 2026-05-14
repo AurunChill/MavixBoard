@@ -10,11 +10,20 @@ ChangedCallback = Callable[[set[int]], None]
 
 
 def _enumerate_capture_indices(scanner: V4l2Scanner) -> set[int]:
-    """Cheaply list /dev/videoN indices that are video-capture devices.
+    """List /dev/videoN indices that look like real cameras.
 
     Used by the polling loop to detect hot-plug. Must NOT open the device
     or trigger calibration — that races with the active GStreamer pipeline
     and falsely reports the camera as gone.
+
+    `filter_capture_devices` alone is too permissive on Raspberry Pi: ISP,
+    codec, unicam nodes (typically /dev/video10..23) all advertise the
+    Video Capture cap but expose no usable raw formats. They'd appear and
+    disappear in the count differently from what CameraRegistry._scan
+    actually keeps (it drops anything with empty parse_camera_params),
+    making the watcher think the set changed every poll and triggering a
+    tear-down loop. So we mirror _scan's filter: only count devices that
+    have at least one width × height × fps × format combination.
     """
     if not scanner.is_available():
         return set()
@@ -22,6 +31,8 @@ def _enumerate_capture_indices(scanner: V4l2Scanner) -> set[int]:
     paths = scanner.filter_capture_devices(names)
     ids: set[int] = set()
     for path in paths:
+        if not scanner.parse_camera_params(path):
+            continue
         try:
             ids.add(int(path.split('video')[1]))
         except (ValueError, IndexError):
