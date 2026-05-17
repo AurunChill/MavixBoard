@@ -83,6 +83,11 @@ class Settings:
     # вместо опроса /dev/tty*. Реальный полётник в этом режиме не ищется.
     mavlink_url: str = field(default_factory=lambda: os.getenv('MAVLINK_URL', ''))
 
+    # SITL/симуляция: аналогично для CRSF. Прямой URL pyserial — без socat/pty.
+    # Пример: `socket://127.0.0.1:5764` (TCP-порт UART4 в Betaflight SITL).
+    # Если задано — board подключается сразу к этому URL и не сканит /dev/tty*.
+    crsf_url: str = field(default_factory=lambda: os.getenv('CRSF_URL', ''))
+
     token_path: Path = _BASE / 'token'
     log_path: Path = field(default_factory=lambda: _resolve_log_dir() / f'mavixboard_{date.today()}.log')
     data_path: Path = field(default_factory=_resolve_data_dir)

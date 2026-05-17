@@ -37,6 +37,13 @@ async def detect(
     if url:
         return await _try_mavlink(url, mavlink_baud, mavlink_timeout)
 
+    # SITL-режим для CRSF: подключаемся напрямую к Betaflight SITL по
+    # `socket://127.0.0.1:5764` (или иному pyserial URL). UART-сканер при
+    # этом не запускаем — реальный полётник в этом режиме не ищется.
+    curl = settings.crsf_url.strip()
+    if curl:
+        return await _try_crsf(curl, crsf_timeout)
+
     for port in ports:
         if not os.path.exists(port):
             continue
