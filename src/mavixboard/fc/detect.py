@@ -40,9 +40,15 @@ async def detect(
     # SITL-режим для CRSF: подключаемся напрямую к Betaflight SITL по
     # `socket://127.0.0.1:5764` (или иному pyserial URL). UART-сканер при
     # этом не запускаем — реальный полётник в этом режиме не ищется.
+    # Пробу через DEVICE_PING пропускаем: Betaflight в роли CRSF receiver
+    # отвечает на info-запросы только при USE_TELEMETRY_CRSF, а файл
+    # telemetry/crsf.c исключён из SITL-сборки (MCU_EXCLUDES в SITL.mk).
+    # Без ответа _probe_crsf уходит в таймаут → controller не создаётся.
+    # В SITL верим пользователю: URL задан — считаем CRSF готовым.
     curl = settings.crsf_url.strip()
     if curl:
-        return await _try_crsf(curl, crsf_timeout)
+        logger.info('[detect] CRSF_URL=%s — пропускаю пробу, подключаюсь сразу', curl)
+        return CrsfController(curl, name='Betaflight SITL')
 
     for port in ports:
         if not os.path.exists(port):
