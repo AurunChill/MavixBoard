@@ -22,6 +22,7 @@ class FCService:
         self._controller: FlightController | None = None
         self._on_packet: PacketCallback | None = None
         self._on_change: ChangeCallback | None = None
+        self._on_telemetry: Callable[[dict], None] | None = None
         self._loop_task: asyncio.Task | None = None
         self._stop_event: asyncio.Event | None = None
 
@@ -44,6 +45,16 @@ class FCService:
 
     def set_change_callback(self, cb: ChangeCallback | None) -> None:
         self._on_change = cb
+
+    def set_telemetry_callback(self, cb: Callable[[dict], None] | None) -> None:
+        """Forwarded to whichever controller is active (currently only the
+        CRSF one decodes telemetry; MAVLink could grow the same hook later).
+        Idempotent — coordinator can wire it once per session."""
+        self._on_telemetry = cb
+        if self._controller is not None:
+            setter = getattr(self._controller, 'set_telemetry_callback', None)
+            if setter is not None:
+                setter(cb)
 
     async def send(self, data: bytes) -> None:
         if self._controller is None:
@@ -88,6 +99,9 @@ class FCService:
 
     async def _activate_controller(self, controller: FlightController) -> None:
         controller.set_packet_callback(self._on_packet)
+        setter = getattr(controller, 'set_telemetry_callback', None)
+        if setter is not None and self._on_telemetry is not None:
+            setter(self._on_telemetry)
         await controller.start()
         self._controller = controller
         logger.info('[fc-service] FC connected: %s / %s', controller.kind, controller.name)

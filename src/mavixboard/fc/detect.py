@@ -8,6 +8,7 @@ import serial
 import serial_asyncio
 from pymavlink import mavutil
 
+from mavixboard.core.config import settings
 from mavixboard.core.logger import logger
 from mavixboard.fc.controllers import CrsfController, FlightController, MavlinkController
 from mavixboard.fc.crsf import BAUDRATE as CRSF_BAUDRATE
@@ -30,6 +31,12 @@ async def detect(
     mavlink_timeout: float = 3.0,
     crsf_timeout: float = 2.0,
 ) -> FlightController | None:
+    # SITL-режим: MAVLINK_URL задан → подключаемся туда вместо UART-сканера.
+    # CRSF в этом режиме не пробуем (симулятор отдаёт только MAVLink).
+    url = settings.mavlink_url.strip()
+    if url:
+        return await _try_mavlink(url, mavlink_baud, mavlink_timeout)
+
     for port in ports:
         if not os.path.exists(port):
             continue
@@ -53,10 +60,15 @@ async def _try_mavlink(port: str, baud: int, timeout: float) -> MavlinkControlle
                 return name, conn
         except (serial.SerialException, OSError) as exc:
             logger.debug('[detect] mavlink %s: %s', port, exc)
+        except Exception as exc:
+            # Сетевые URL (udp/tcp) могут падать ValueError/AttributeError
+            # из глубин pymavlink при кривом URL или порте, занятом другим
+            # клиентом. Не валим detect-loop, просто логируем и идём дальше.
+            logger.debug('[detect] mavlink %s: %s', port, exc)
         if conn is not None:
             try:
                 conn.close()
-            except (serial.SerialException, OSError) as exc:
+            except Exception as exc:
                 logger.debug('[detect] mavlink close %s: %s', port, exc)
         return None
 

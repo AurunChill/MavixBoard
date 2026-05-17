@@ -94,6 +94,47 @@ class SessionCoordinator:
         except Exception as exc:
             logger.warning('[coord] notify_fc_changed error: %s', exc)
 
+    def _on_fc_telemetry(self, decoded: dict) -> None:
+        """Called from CRSF / MAVLink read loops for every decoded
+        telemetry frame. We forward only the messages the GCS actually
+        renders: battery (overlay) and command_ack (arm-debug log).
+        High-rate stuff (attitude / gps) would saturate a JSON channel;
+        if needed later they go via the binary packet channel instead."""
+        if self._manager is None or self._manager.channels is None:
+            return
+        cfg = self._manager.channels.config
+        if cfg is None:
+            return
+        kind = decoded.get('type')
+        if kind == 'battery':
+            try:
+                cfg.send_json({
+                    'type': 'battery',
+                    'percent': int(decoded.get('remaining', 0)),
+                    'voltage': float(decoded.get('voltage', 0.0)),
+                    'current': float(decoded.get('current', 0.0)),
+                })
+            except Exception as exc:
+                logger.debug('[coord] battery forward error: %s', exc)
+        elif kind == 'command_ack':
+            try:
+                cfg.send_json({
+                    'type': 'command_ack',
+                    'command': decoded.get('command_name', ''),
+                    'result': decoded.get('result_name', ''),
+                })
+            except Exception as exc:
+                logger.debug('[coord] command_ack forward error: %s', exc)
+        elif kind == 'heartbeat':
+            try:
+                cfg.send_json({
+                    'type': 'fc_armed',
+                    'armed': bool(decoded.get('armed', False)),
+                    'custom_mode': int(decoded.get('custom_mode', 0)),
+                })
+            except Exception as exc:
+                logger.debug('[coord] fc_armed forward error: %s', exc)
+
     async def _on_message(self, msg: dict) -> None:
         kind = msg.get('type')
         match kind:
@@ -131,6 +172,13 @@ class SessionCoordinator:
         pipeline = await asyncio.to_thread(self._pipeline_factory)
         if pipeline is None or pipeline.webrtc_elem is None:
             logger.error('[coord] pipeline factory returned no pipeline; aborting session')
+            # No cameras / pipeline broken: tell the server to drop the peer pair
+            # so the GCS gets a drone_disconnected promptly instead of waiting on
+            # an SDP that will never arrive until the WS ping timeout.
+            try:
+                await self._signal_client.send({'type': 'disconnect_session'})
+            except Exception as exc:
+                logger.warning('[coord] disconnect_session send error: %s', exc)
             return
         assert self._loop is not None
         self._pipeline = pipeline
@@ -168,6 +216,10 @@ class SessionCoordinator:
             # on data-channel open — without re-firing it here, the GCS
             # would never learn about a hot-plugged FC.
             self._fc_service.set_change_callback(self._on_fc_change)
+            # Decoded telemetry frames (battery / attitude / flight_mode)
+            # — coordinator picks out the ones the UI cares about and
+            # forwards as compact JSON via the config data-channel.
+            self._fc_service.set_telemetry_callback(self._on_fc_telemetry)
         if self._watcher is not None:
             initial_ids = {cam.device_index for cam in pipeline.cameras}
             self._watcher.start(initial_ids, self._on_cameras_changed)

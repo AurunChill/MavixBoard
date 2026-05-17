@@ -51,6 +51,7 @@ class WebRTCManager:
         self._peer = PeerSession(gcs_id, self._webrtc, self._loop)
         self._channels = DataChannelHub(self._webrtc)
         self._cameras = list(cameras) if cameras else []
+        self._fc_fwd_count = 0  # reset per-session counter for forward log
         self._wire_channels()
         self._ice_pump_task = self._loop.create_task(self._pump_ice())
         self._offer_pump_task = self._loop.create_task(self._pump_offer())
@@ -94,6 +95,15 @@ class WebRTCManager:
     def _forward_to_fc(self, data: bytes) -> None:
         if self._fc_service is None:
             return
+        # Throttled debug log: first packet of each session + every ~50th
+        # (so ~1 line per second at the 50 Hz joystick stream). Lets us
+        # confirm packets actually arrive from the GCS without burying
+        # the log under 50 lines/sec of identical entries.
+        cnt = getattr(self, '_fc_fwd_count', 0) + 1
+        self._fc_fwd_count = cnt
+        if cnt == 1 or cnt % 50 == 0:
+            logger.info('[manager] →FC packet #%d len=%d head=%s',
+                        cnt, len(data), data[:6].hex())
         asyncio.run_coroutine_threadsafe(self._fc_service.send(data), self._loop)
 
     def _send_config_open(self) -> None:

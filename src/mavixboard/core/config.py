@@ -78,6 +78,11 @@ class Settings:
     stun_server: str = field(default_factory=lambda: os.getenv('STUN_SERVER', 'stun://localhost:3478'))
     turn_server: str = field(default_factory=lambda: os.getenv('TURN_SERVER', ''))
 
+    # SITL/симуляция: если задано — board подключается к MAVLink по этому URL
+    # (`udpin:127.0.0.1:14540` для PX4 SITL Gazebo, `tcp:host:port` и т.п.)
+    # вместо опроса /dev/tty*. Реальный полётник в этом режиме не ищется.
+    mavlink_url: str = field(default_factory=lambda: os.getenv('MAVLINK_URL', ''))
+
     token_path: Path = _BASE / 'token'
     log_path: Path = field(default_factory=lambda: _resolve_log_dir() / f'mavixboard_{date.today()}.log')
     data_path: Path = field(default_factory=_resolve_data_dir)
