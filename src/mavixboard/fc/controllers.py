@@ -201,12 +201,21 @@ class MavlinkController:
 class CrsfController:
     kind = 'crsf'
     # Betaflight / INAV decide that the RC link is alive based on
-    # LINK_STATISTICS (frame 0x14) — without it they raise RXLOSS even
-    # if RC_CHANNELS (0x16) keeps streaming. We inject a synthetic
-    # LINK_STATISTICS frame at the period below alongside the operator's
-    # joystick frames. 0.5 s matches Crossfire/ELRS hardware cadence and
-    # the legacy board implementation.
-    LINK_STATS_INTERVAL_SECONDS = 0.5
+    # LINK_STATISTICS (frame 0x14) — без него они срываются в RXLOSS
+    # даже при идущем RC_CHANNELS (0x16). 0.5 c было мало (BF подменял
+    # каналы failsafe-значениями между LINK_STATS-фреймами); 0.1 c ближе
+    # к реальной Crossfire-каденции (~10 Hz).
+    LINK_STATS_INTERVAL_SECONDS = 0.1
+    # RC-репитер: WebRTC доставляет пакеты пачками с джиттером, что
+    # Betaflight видит как пропадание сигнала. Поэтому кэшируем последний
+    # RC-фрейм и переотправляем его в UART с фиксированным шагом 5 мс
+    # (200 Hz) — близко к реальной Crossfire-каденции. Если новых RC-
+    # фреймов не было дольше RC_FRAME_TIMEOUT_SECONDS, репитер замолкает,
+    # чтобы дрон не висел на последних стиках при разрыве линка (BF тогда
+    # уйдёт в свой штатный RXLOSS-failsafe).
+    RC_PUMP_INTERVAL_SECONDS = 0.005
+    RC_FRAME_TIMEOUT_SECONDS = 0.3
+    RC_FRAME_TYPE = 0x16
 
     def __init__(self, port: str, name: str = 'CRSF FC') -> None:
         self._port = port
@@ -217,6 +226,11 @@ class CrsfController:
         self._on_telemetry: Callable[[dict], None] | None = None
         self._read_task: asyncio.Task | None = None
         self._link_stats_task: asyncio.Task | None = None
+        self._rc_pump_task: asyncio.Task | None = None
+        self._latest_rc_frame: bytes | None = None
+        self._last_rc_recv: float = 0.0
+        self._rc_recv_count = 0
+        self._rc_pump_count = 0
         self._closed = False
 
     @property
@@ -241,6 +255,7 @@ class CrsfController:
         )
         self._read_task = asyncio.create_task(self._read_loop())
         self._link_stats_task = asyncio.create_task(self._link_stats_loop())
+        self._rc_pump_task = asyncio.create_task(self._rc_pump_loop())
         self._write_count = 0
         logger.info('[crsf] started on %s', self._port)
 
@@ -248,7 +263,7 @@ class CrsfController:
         if self._closed:
             return
         self._closed = True
-        for task in (self._read_task, self._link_stats_task):
+        for task in (self._read_task, self._link_stats_task, self._rc_pump_task):
             if task is None:
                 continue
             task.cancel()
@@ -258,6 +273,7 @@ class CrsfController:
                 pass
         self._read_task = None
         self._link_stats_task = None
+        self._rc_pump_task = None
         if self._writer is not None:
             try:
                 self._writer.close()
@@ -269,11 +285,28 @@ class CrsfController:
         logger.info('[crsf] closed')
 
     async def send(self, data: bytes) -> None:
+        """RC-фреймы НЕ пишем в UART напрямую — кладём в кэш, _rc_pump_loop
+        переотправляет их в UART строго каждые RC_PUMP_INTERVAL_SECONDS.
+        Это развязывает WebRTC-джиттер (пакеты от Desktop приходят пачками)
+        от cadence'а UART, которую ожидает Betaflight. Все остальные
+        фреймы (на будущее — config/telemetry от GCS) идут напрямую."""
         if self._closed or self._writer is None:
             if self._closed:
                 logger.debug('[crsf] send dropped (controller closed)')
             elif self._writer is None:
                 logger.warning('[crsf] send dropped (writer not initialised)')
+            return
+        if (len(data) >= 3
+                and data[0] in (0xC8, 0xEE, 0xEC, 0x00)
+                and data[2] == self.RC_FRAME_TYPE):
+            self._latest_rc_frame = bytes(data)
+            self._last_rc_recv = asyncio.get_event_loop().time()
+            cnt = self._rc_recv_count + 1
+            self._rc_recv_count = cnt
+            if cnt == 1 or cnt % 100 == 0:
+                # На Desktop tick 100 Hz это лог раз в секунду.
+                logger.info('[crsf] RC cache #%d len=%d head=%s',
+                            cnt, len(data), data[:6].hex())
             return
         try:
             self._writer.write(data)
@@ -284,9 +317,42 @@ class CrsfController:
         cnt = self._write_count + 1
         self._write_count = cnt
         if cnt == 1 or cnt % 50 == 0:
-            # Stream is 50 Hz when joystick is active — one log per second.
-            logger.info('[crsf] →UART packet #%d len=%d head=%s',
+            logger.info('[crsf] →UART direct #%d len=%d head=%s',
                         cnt, len(data), data[:6].hex())
+
+    async def _rc_pump_loop(self) -> None:
+        """200 Hz пуш кэшированного RC-фрейма в UART. Если фрейм устарел
+        (> RC_FRAME_TIMEOUT_SECONDS), бросаем переотправку — пусть BF
+        сам триггерит RXLOSS-failsafe, а не остаётся на залипших стиках."""
+        logger.info('[crsf] rc pump started @ %d Hz', int(1 / self.RC_PUMP_INTERVAL_SECONDS))
+        loop = asyncio.get_event_loop()
+        try:
+            while not self._closed:
+                if self._writer is not None and self._latest_rc_frame is not None:
+                    age = loop.time() - self._last_rc_recv
+                    if age >= self.RC_FRAME_TIMEOUT_SECONDS:
+                        # Фрейм протух — выкидываем кэш, repeater молчит до
+                        # прихода нового свежего RC-фрейма.
+                        logger.warning('[crsf] rc pump: frame stale (%.2fs), pausing', age)
+                        self._latest_rc_frame = None
+                    else:
+                        try:
+                            self._writer.write(self._latest_rc_frame)
+                            # drain не зовём: 26 байт × 200 Hz = 5.2 KB/s
+                            # против пропускной 52 KB/s — буфер не забьётся,
+                            # а лишний await съел бы cadence pump'а.
+                            cnt = self._rc_pump_count + 1
+                            self._rc_pump_count = cnt
+                            if cnt == 1 or cnt % 1000 == 0:
+                                # 1 раз в 5 секунд — подтверждаем что pump жив.
+                                logger.info('[crsf] rc pump #%d', cnt)
+                        except Exception as exc:
+                            logger.debug('[crsf] rc pump write error: %s', exc)
+                await asyncio.sleep(self.RC_PUMP_INTERVAL_SECONDS)
+        except asyncio.CancelledError:
+            return
+        finally:
+            logger.info('[crsf] rc pump stopped')
 
     async def _link_stats_loop(self) -> None:
         """Inject a LINK_STATISTICS frame at LINK_STATS_INTERVAL_SECONDS so
