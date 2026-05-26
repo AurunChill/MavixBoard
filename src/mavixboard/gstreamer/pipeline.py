@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-from urllib.parse import quote
 
 from mavixboard.core.config import settings
 
@@ -11,23 +10,29 @@ if TYPE_CHECKING:
 
 def _build_turn_url() -> str:
     """webrtcbin требует turn-server в формате turn://user:pass@host:port.
-    Берём отдельные TURN_USERNAME/TURN_PASSWORD из env и подставляем в URL.
-    Без кредов TURN-релей не аутентифицируется и не работает (остаётся
-    только STUN, который не помогает при симметричном NAT)."""
+    Берём отдельные TURN_USERNAME/TURN_PASSWORD из env и подставляем в URL
+    как ПЛЕЙН-строки, без percent-encoding.
+
+    Почему без encoding: webrtcbin -> libnice не URL-декодит userinfo при
+    отправке на TURN-сервер; coturn хеширует Long-Term Credentials поверх
+    исходной строки пароля. Если запихнуть `BxBF%2B...` вместо `BxBF+...`,
+    хеши не совпадут, allocation вернёт 401 Unauthorized и relay-кандидат
+    не появится -- молча, без visible ошибки. См. Bug 758389 в GStreamer
+    bug tracker (аналогичная проблема в RTSP-парсере).
+
+    `+` и `/` в userinfo легальны по RFC 3986. Опасны только `:` и `@`
+    в самих creds -- если они там окажутся, парсер сломает структуру.
+    Для генерируемых нами openssl-паролей таких символов нет."""
     raw = settings.turn_server.strip()
     if not raw:
         return ''
-    # Нормализуем схему: turn:host:port -> turn://host:port.
     if raw.startswith('turn:') and not raw.startswith('turn://'):
         raw = 'turn://' + raw[len('turn:'):]
     elif raw.startswith('turns:') and not raw.startswith('turns://'):
         raw = 'turns://' + raw[len('turns:'):]
-    # Если креды уже зашиты в URL (turn://user:pass@host) — оставляем как есть.
     if settings.turn_username and '@' not in raw.split('://', 1)[-1]:
-        user = quote(settings.turn_username, safe='')
-        pwd = quote(settings.turn_password, safe='')
         scheme, rest = raw.split('://', 1)
-        raw = f'{scheme}://{user}:{pwd}@{rest}'
+        raw = f'{scheme}://{settings.turn_username}:{settings.turn_password}@{rest}'
     return raw
 
 
