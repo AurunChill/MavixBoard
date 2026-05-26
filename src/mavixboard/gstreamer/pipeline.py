@@ -1,11 +1,34 @@
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
 from mavixboard.core.config import settings
 
 if TYPE_CHECKING:
     from mavixboard.gstreamer.camera import Camera, CameraParams
+
+logger = logging.getLogger(__name__)
+
+
+def _normalize_scheme(raw: str, prefix: str) -> str:
+    """Привести `prefix:host:port` к `prefix://host:port`. webrtcbin
+    парсит ICE URL'ы строго через `scheme://` (см. документацию). Если
+    схема записана как `stun:host:port` (одно `:`) — webrtcbin молча
+    игнорирует строку, никакая ICE-функция не работает."""
+    if raw.startswith(f'{prefix}:') and not raw.startswith(f'{prefix}://'):
+        return f'{prefix}://' + raw[len(prefix) + 1:]
+    return raw
+
+
+def _build_stun_url() -> str:
+    """Нормализованный stun-URL для webrtcbin."""
+    raw = settings.stun_server.strip()
+    if not raw:
+        return ''
+    raw = _normalize_scheme(raw, 'stuns')
+    raw = _normalize_scheme(raw, 'stun')
+    return raw
 
 
 def _build_turn_url() -> str:
@@ -17,8 +40,7 @@ def _build_turn_url() -> str:
     отправке на TURN-сервер; coturn хеширует Long-Term Credentials поверх
     исходной строки пароля. Если запихнуть `BxBF%2B...` вместо `BxBF+...`,
     хеши не совпадут, allocation вернёт 401 Unauthorized и relay-кандидат
-    не появится -- молча, без visible ошибки. См. Bug 758389 в GStreamer
-    bug tracker (аналогичная проблема в RTSP-парсере).
+    не появится -- молча. См. Bug 758389 в GStreamer bug tracker.
 
     `+` и `/` в userinfo легальны по RFC 3986. Опасны только `:` и `@`
     в самих creds -- если они там окажутся, парсер сломает структуру.
@@ -26,22 +48,38 @@ def _build_turn_url() -> str:
     raw = settings.turn_server.strip()
     if not raw:
         return ''
-    if raw.startswith('turn:') and not raw.startswith('turn://'):
-        raw = 'turn://' + raw[len('turn:'):]
-    elif raw.startswith('turns:') and not raw.startswith('turns://'):
-        raw = 'turns://' + raw[len('turns:'):]
+    raw = _normalize_scheme(raw, 'turns')
+    raw = _normalize_scheme(raw, 'turn')
     if settings.turn_username and '@' not in raw.split('://', 1)[-1]:
         scheme, rest = raw.split('://', 1)
         raw = f'{scheme}://{settings.turn_username}:{settings.turn_password}@{rest}'
     return raw
 
 
+def _redact_url(url: str) -> str:
+    """Скрыть password в URL для лога: turn://user:PASS@host -> turn://user:***@host."""
+    if '://' not in url or '@' not in url:
+        return url
+    scheme, rest = url.split('://', 1)
+    if '@' not in rest:
+        return url
+    userinfo, hostpart = rest.rsplit('@', 1)
+    if ':' in userinfo:
+        user, _ = userinfo.split(':', 1)
+        return f'{scheme}://{user}:***@{hostpart}'
+    return url
+
+
 class PipelineBuilder:
     @staticmethod
     def build_pipeline_description(cameras: list['Camera']) -> str:
+        stun_url = _build_stun_url()
         turn_url = _build_turn_url()
+        logger.info('[ice] stun-server=%s', stun_url or '(empty)')
+        logger.info('[ice] turn-server=%s', _redact_url(turn_url) or '(empty)')
+        stun = f' stun-server={stun_url}' if stun_url else ''
         turn = f' turn-server={turn_url}' if turn_url else ''
-        webrtc_head = f'webrtcbin name=webrtc bundle-policy=max-bundle stun-server={settings.stun_server}{turn}'
+        webrtc_head = f'webrtcbin name=webrtc bundle-policy=max-bundle{stun}{turn}'
         sources = ' '.join(PipelineBuilder._camera_branch(cam, idx) for idx, cam in enumerate(cameras))
         return f'{webrtc_head} {sources}'
 
