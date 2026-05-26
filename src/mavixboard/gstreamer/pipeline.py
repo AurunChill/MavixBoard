@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+from urllib.parse import quote
 
 from mavixboard.core.config import settings
 
@@ -8,10 +9,33 @@ if TYPE_CHECKING:
     from mavixboard.gstreamer.camera import Camera, CameraParams
 
 
+def _build_turn_url() -> str:
+    """webrtcbin требует turn-server в формате turn://user:pass@host:port.
+    Берём отдельные TURN_USERNAME/TURN_PASSWORD из env и подставляем в URL.
+    Без кредов TURN-релей не аутентифицируется и не работает (остаётся
+    только STUN, который не помогает при симметричном NAT)."""
+    raw = settings.turn_server.strip()
+    if not raw:
+        return ''
+    # Нормализуем схему: turn:host:port -> turn://host:port.
+    if raw.startswith('turn:') and not raw.startswith('turn://'):
+        raw = 'turn://' + raw[len('turn:'):]
+    elif raw.startswith('turns:') and not raw.startswith('turns://'):
+        raw = 'turns://' + raw[len('turns:'):]
+    # Если креды уже зашиты в URL (turn://user:pass@host) — оставляем как есть.
+    if settings.turn_username and '@' not in raw.split('://', 1)[-1]:
+        user = quote(settings.turn_username, safe='')
+        pwd = quote(settings.turn_password, safe='')
+        scheme, rest = raw.split('://', 1)
+        raw = f'{scheme}://{user}:{pwd}@{rest}'
+    return raw
+
+
 class PipelineBuilder:
     @staticmethod
     def build_pipeline_description(cameras: list['Camera']) -> str:
-        turn = f' turn-server={settings.turn_server}' if settings.turn_server else ''
+        turn_url = _build_turn_url()
+        turn = f' turn-server={turn_url}' if turn_url else ''
         webrtc_head = f'webrtcbin name=webrtc bundle-policy=max-bundle stun-server={settings.stun_server}{turn}'
         sources = ' '.join(PipelineBuilder._camera_branch(cam, idx) for idx, cam in enumerate(cameras))
         return f'{webrtc_head} {sources}'
@@ -25,7 +49,7 @@ class PipelineBuilder:
             f'queue max-size-buffers=2 leaky=downstream ! '
             f'videoconvert ! videoscale ! '
             f'video/x-raw,width={p.width},height={p.height},framerate={p.fps}/1 ! '
-            f'x264enc name=enc{idx} bitrate={cam.bitrate_kbs} tune=zerolatency speed-preset=ultrafast key-int-max={p.fps} ! '
+            f'x264enc name=enc{idx} bitrate={cam.bitrate_kbs} tune=zerolatency speed-preset=ultrafast key-int-max={max(1, p.fps // 2)} intra-refresh=true ! '
             f'video/x-h264,profile=constrained-baseline ! h264parse'
         )
         q = 'queue max-size-buffers=2 leaky=downstream silent=true'

@@ -77,6 +77,8 @@ class Settings:
     drone_token: str = field(default_factory=lambda: os.getenv('DRONE_TOKEN', ''))
     stun_server: str = field(default_factory=lambda: os.getenv('STUN_SERVER', 'stun://localhost:3478'))
     turn_server: str = field(default_factory=lambda: os.getenv('TURN_SERVER', ''))
+    turn_username: str = field(default_factory=lambda: os.getenv('TURN_USERNAME', ''))
+    turn_password: str = field(default_factory=lambda: os.getenv('TURN_PASSWORD', ''))
 
     # SITL/симуляция: если задано — board подключается к MAVLink по этому URL
     # (`udpin:127.0.0.1:14540` для PX4 SITL Gazebo, `tcp:host:port` и т.п.)
