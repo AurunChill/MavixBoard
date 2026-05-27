@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from typing import TYPE_CHECKING
 
 from mavixboard.core.config import settings
@@ -53,6 +54,10 @@ def _build_turn_url() -> str:
     if settings.turn_username and '@' not in raw.split('://', 1)[-1]:
         scheme, rest = raw.split('://', 1)
         raw = f'{scheme}://{settings.turn_username}:{settings.turn_password}@{rest}'
+    # webrtcbin/libnice требуют явный transport — без него TURN-URL молча игнорируется
+    if '?' not in raw:
+        transport = os.getenv('TURN_TRANSPORT', 'udp').strip().lower() or 'udp'
+        raw = f'{raw}?transport={transport}'
     return raw
 
 

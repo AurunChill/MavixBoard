@@ -24,13 +24,39 @@ class PeerSession:
         self._loop = loop
         self.ice_candidates: asyncio.Queue = asyncio.Queue()
         self.offer_sdp: str | None = None
+        self._cand_counts = {'host': 0, 'srflx': 0, 'relay': 0, 'prflx': 0, 'other': 0}
         self._negotiation_handler = self._webrtc.connect('on-negotiation-needed', self._on_negotiation_needed)
         self._ice_handler = self._webrtc.connect('on-ice-candidate', self._on_ice_candidate)
+        # Диагностика состояний ICE — без неё невозможно понять, почему не идёт медиа
+        # за симметричным NAT (особенно когда relay-кандидат не собирается).
+        self._gather_handler = self._webrtc.connect('notify::ice-gathering-state', self._on_gather_state)
+        self._iceconn_handler = self._webrtc.connect('notify::ice-connection-state', self._on_iceconn_state)
+        # Дополнительно добавляем TURN-сервер через сигнал add-turn-server.
+        # Это надёжнее, чем свойство turn-server в gst-launch строке: сигнал
+        # возвращает gboolean — сразу видно, принят ли URL libnice. Если
+        # TURN указан и в строке, и через сигнал — webrtcbin принимает оба
+        # и собирает relay-кандидаты с каждого.
+        self._register_turn_server()
+
+    def _register_turn_server(self) -> None:
+        from mavixboard.gstreamer.pipeline import _build_turn_url, _redact_url
+        turn_url = _build_turn_url()
+        if not turn_url:
+            return
+        try:
+            ok = self._webrtc.emit('add-turn-server', turn_url)
+        except Exception as exc:
+            logger.warning('[peer %s] add-turn-server raised: %s', self.gcs_id, exc)
+            return
+        logger.info('[peer %s] add-turn-server(%s) = %s',
+                    self.gcs_id, _redact_url(turn_url), bool(ok))
 
     def close(self) -> None:
         try:
             self._webrtc.disconnect(self._negotiation_handler)
             self._webrtc.disconnect(self._ice_handler)
+            self._webrtc.disconnect(self._gather_handler)
+            self._webrtc.disconnect(self._iceconn_handler)
         except (TypeError, AttributeError):
             pass
 
@@ -52,8 +78,42 @@ class PeerSession:
         logger.info('[peer %s] offer created, set as local description', self.gcs_id)
 
     def _on_ice_candidate(self, _element: Gst.Element, mline_index: int, candidate: str) -> None:
+        # Считаем кандидатов по типам — на симметричном NAT критично видеть
+        # наличие хотя бы одного relay-кандидата.
+        cand_type = 'other'
+        for t in ('host', 'srflx', 'relay', 'prflx'):
+            if f'typ {t}' in candidate:
+                cand_type = t
+                break
+        self._cand_counts[cand_type] = self._cand_counts.get(cand_type, 0) + 1
+        logger.info('[peer %s] local ICE candidate type=%s mline=%d', self.gcs_id, cand_type, mline_index)
         payload = {'candidate': candidate, 'sdpMLineIndex': mline_index, 'sdpMid': str(mline_index)}
         self._loop.call_soon_threadsafe(self.ice_candidates.put_nowait, payload)
+
+    def _on_gather_state(self, element: Gst.Element, _param) -> None:
+        state = element.get_property('ice-gathering-state')
+        logger.info('[peer %s] ICE gathering state -> %s, candidates so far: %s',
+                    self.gcs_id, state.value_nick if hasattr(state, 'value_nick') else state,
+                    self._cand_counts)
+        # Когда gathering завершён (complete), это последний момент проверить,
+        # есть ли relay-кандидаты. Их отсутствие = TURN-сервер не сработал
+        # (неправильный URL, неверные creds, недоступен через текущий transport).
+        try:
+            from gi.repository import GstWebRTC as _Gw  # type: ignore
+            complete_state = _Gw.WebRTCICEGatheringState.COMPLETE
+        except Exception:
+            complete_state = None
+        if complete_state is not None and state == complete_state:
+            if self._cand_counts.get('relay', 0) == 0:
+                logger.warning('[peer %s] gathering complete but NO relay candidates — '
+                               'TURN not working; symmetric NAT clients will fail. '
+                               'Check TURN URL format (turn://user:pass@host:port?transport=udp), '
+                               'credentials and reachability.', self.gcs_id)
+
+    def _on_iceconn_state(self, element: Gst.Element, _param) -> None:
+        state = element.get_property('ice-connection-state')
+        logger.info('[peer %s] ICE connection state -> %s',
+                    self.gcs_id, state.value_nick if hasattr(state, 'value_nick') else state)
 
     def apply_answer(self, sdp_data: dict) -> bool:
         if sdp_data.get('type') != 'answer':

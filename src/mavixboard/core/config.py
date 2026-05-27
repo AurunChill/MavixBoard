@@ -75,7 +75,7 @@ class Settings:
     # both are empty and __main__ falls back to the local token file.
     drone_id: str = field(default_factory=lambda: os.getenv('DRONE_ID', ''))
     drone_token: str = field(default_factory=lambda: os.getenv('DRONE_TOKEN', ''))
-    stun_server: str = field(default_factory=lambda: os.getenv('STUN_SERVER', 'stun://localhost:3478'))
+    stun_server: str = field(default_factory=lambda: os.getenv('STUN_SERVER', 'stun://stun.l.google.com:19302'))
     turn_server: str = field(default_factory=lambda: os.getenv('TURN_SERVER', ''))
     turn_username: str = field(default_factory=lambda: os.getenv('TURN_USERNAME', ''))
     turn_password: str = field(default_factory=lambda: os.getenv('TURN_PASSWORD', ''))
