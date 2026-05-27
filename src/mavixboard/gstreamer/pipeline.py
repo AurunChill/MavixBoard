@@ -81,10 +81,14 @@ class PipelineBuilder:
         stun_url = _build_stun_url()
         turn_url = _build_turn_url()
         logger.info('[ice] stun-server=%s', stun_url or '(empty)')
-        logger.info('[ice] turn-server=%s', _redact_url(turn_url) or '(empty)')
+        logger.info('[ice] turn-server (via add-turn-server signal)=%s', _redact_url(turn_url) or '(empty)')
         stun = f' stun-server={stun_url}' if stun_url else ''
-        turn = f' turn-server={turn_url}' if turn_url else ''
-        webrtc_head = f'webrtcbin name=webrtc bundle-policy=max-bundle{stun}{turn}'
+        # TURN намеренно НЕ задаётся как property — иначе последующий
+        # сигнал add-turn-server в PeerSession отвергается как дубликат
+        # (возвращает False). Регистрация только через сигнал даёт
+        # boolean-подтверждение принятия URL и обходит баги формата
+        # property в некоторых версиях webrtcbin.
+        webrtc_head = f'webrtcbin name=webrtc bundle-policy=max-bundle{stun}'
         sources = ' '.join(PipelineBuilder._camera_branch(cam, idx) for idx, cam in enumerate(cameras))
         return f'{webrtc_head} {sources}'
 
