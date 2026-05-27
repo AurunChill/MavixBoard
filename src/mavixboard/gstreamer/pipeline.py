@@ -35,17 +35,15 @@ def _build_stun_url() -> str:
 def _build_turn_url() -> str:
     """webrtcbin требует turn-server в формате turn://user:pass@host:port.
     Берём отдельные TURN_USERNAME/TURN_PASSWORD из env и подставляем в URL
-    как ПЛЕЙН-строки, без percent-encoding.
+    с обязательным percent-encoding.
 
-    Почему без encoding: webrtcbin -> libnice не URL-декодит userinfo при
-    отправке на TURN-сервер; coturn хеширует Long-Term Credentials поверх
-    исходной строки пароля. Если запихнуть `BxBF%2B...` вместо `BxBF+...`,
-    хеши не совпадут, allocation вернёт 401 Unauthorized и relay-кандидат
-    не появится -- молча. См. Bug 758389 в GStreamer bug tracker.
-
-    `+` и `/` в userinfo легальны по RFC 3986. Опасны только `:` и `@`
-    в самих creds -- если они там окажутся, парсер сломает структуру.
-    Для генерируемых нами openssl-паролей таких символов нет."""
+    Почему обязательно encoding: libnice парсит URI строго по RFC 3986
+    (через gst_uri_from_string). Незаэкранированные `+`, `/`, `=`, `@`,
+    `:`, `?` в userinfo ломают парсинг — add-turn-server возвращает FALSE
+    и relay-кандидаты не собираются. libnice сам декодирует userinfo
+    перед формированием Long-Term Credentials, поэтому coturn получает
+    исходный пароль, и хеши совпадают."""
+    from urllib.parse import quote as _q
     raw = settings.turn_server.strip()
     if not raw:
         return ''
@@ -53,7 +51,9 @@ def _build_turn_url() -> str:
     raw = _normalize_scheme(raw, 'turn')
     if settings.turn_username and '@' not in raw.split('://', 1)[-1]:
         scheme, rest = raw.split('://', 1)
-        raw = f'{scheme}://{settings.turn_username}:{settings.turn_password}@{rest}'
+        user_q = _q(settings.turn_username, safe='')
+        pass_q = _q(settings.turn_password, safe='')
+        raw = f'{scheme}://{user_q}:{pass_q}@{rest}'
     # ВНИМАНИЕ: `?transport=...` поддерживается только в свежих версиях
     # libnice / gst-plugins-bad (≥1.22 c относительно новым libnice). На
     # старых стеках (типичный Raspberry Pi OS Bookworm) такой URL
