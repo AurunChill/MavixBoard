@@ -113,7 +113,7 @@ src/mavixboard/
 Загружает значения из:
 
 1. `/etc/mavixboard/preset.env` — конфигурация, «впаянная» при сборке
-   `.deb`-пакета (содержит `USER_ID`, `DRONE_TOKEN`, `SIGNAL_SERVER_IP`).
+   `.tar.gz`-архива (содержит `USER_ID`, `DRONE_TOKEN`, `SIGNAL_SERVER_IP`).
    Загружается без переопределения уже установленных переменных.
 2. Локального `.env` в корне проекта — для разработки.
    Загружается с переопределением.
@@ -229,36 +229,39 @@ gstreamer1.0-nice
 v4l-utils
 ```
 
-Полный перечень содержится в поле `Depends:` файла `DEBIAN/control`
-устанавливаемого `.deb`-пакета.
+Полный перечень содержится в скрипте `install.sh` устанавливаемого
+`.tar.gz`-архива (вызовы `apt-get install`).
 
 ---
 
 ## 6. Установка и настройка
 
-### 6.1. Установка через `.deb`-пакет
+### 6.1. Установка через `.tar.gz`-архив
 
-Рекомендуемый способ. Файл получается от сервера «MavixServer»
+Рекомендуемый способ. Архив получается от сервера «MavixServer»
 обращением:
 
 ```
-GET https://<server>/api/v1/builds/board.deb?drone_id=<id>
+GET https://<server>/api/v1/builds/board?drone_id=<id>
 Authorization: Bearer <access_token>
 ```
 
 Установка на дроне:
 
 ```bash
-sudo apt update
-sudo apt install ./mavixboard.deb
+tar -xzf mavixboard-<id>.tar.gz
+cd mavixboard-<id>
+sudo ./install.sh
 sudo systemctl enable --now mavixboard.service
 ```
 
 В процессе установки:
 
+- ставятся системные зависимости через `apt-get`;
 - создаётся виртуальное окружение `/opt/mavixboard/.venv` с доступом
   к системным пакетам (`--system-site-packages`);
-- из локального wheel и из PyPI устанавливаются зависимости;
+- зависимости Python устанавливаются из локальных wheel-файлов,
+  входящих в архив (без обращения в интернет);
 - регистрируется и запускается systemd-служба `mavixboard.service`.
 
 ### 6.2. Установка для разработки
@@ -283,9 +286,9 @@ cp .env-example .env
 | `STUN_SERVER` | URL STUN-сервера | `stun://localhost:3478` |
 | `TURN_SERVER` | URL TURN-сервера | пусто |
 
-При установке через `.deb` параметры `USER_ID`, `DRONE_TOKEN`,
+При установке через `.tar.gz` параметры `USER_ID`, `DRONE_TOKEN`,
 `SIGNAL_SERVER_IP` записываются в `/etc/mavixboard/preset.env` сервером
-автоматически.
+автоматически (на этапе сборки архива).
 
 ---
 
