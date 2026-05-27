@@ -54,9 +54,14 @@ def _build_turn_url() -> str:
     if settings.turn_username and '@' not in raw.split('://', 1)[-1]:
         scheme, rest = raw.split('://', 1)
         raw = f'{scheme}://{settings.turn_username}:{settings.turn_password}@{rest}'
-    # webrtcbin/libnice требуют явный transport — без него TURN-URL молча игнорируется
-    if '?' not in raw:
-        transport = os.getenv('TURN_TRANSPORT', 'udp').strip().lower() or 'udp'
+    # ВНИМАНИЕ: `?transport=...` поддерживается только в свежих версиях
+    # libnice / gst-plugins-bad (≥1.22 c относительно новым libnice). На
+    # старых стеках (типичный Raspberry Pi OS Bookworm) такой URL
+    # отвергается signal'ом add-turn-server (возвращает False). Поэтому
+    # query-параметр добавляется ТОЛЬКО если пользователь явно задал env
+    # TURN_TRANSPORT — иначе оставляем URL минималистичным.
+    transport = os.getenv('TURN_TRANSPORT', '').strip().lower()
+    if transport and '?' not in raw:
         raw = f'{raw}?transport={transport}'
     return raw
 
