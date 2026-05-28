@@ -88,12 +88,18 @@ class PipelineBuilder:
         logger.info('[ice] stun-server=%s', stun_url or '(empty)')
         logger.info('[ice] turn-server (via add-turn-server signal)=%s', _redact_url(turn_url) or '(empty)')
         stun = f' stun-server={stun_url}' if stun_url else ''
+        # force_relay: гонять только через TURN. webrtcbin сам выкидывает
+        # host/srflx-кандидаты и не пытается прямые/srflx-пары. Включается
+        # settings.force_relay (env FORCE_RELAY).
+        relay = ' ice-transport-policy=relay' if settings.force_relay else ''
+        if settings.force_relay:
+            logger.info('[ice] force_relay=ON — ice-transport-policy=relay (TURN only)')
         # TURN намеренно НЕ задаётся как property — иначе последующий
         # сигнал add-turn-server в PeerSession отвергается как дубликат
         # (возвращает False). Регистрация только через сигнал даёт
         # boolean-подтверждение принятия URL и обходит баги формата
         # property в некоторых версиях webrtcbin.
-        webrtc_head = f'webrtcbin name=webrtc bundle-policy=max-bundle{stun}'
+        webrtc_head = f'webrtcbin name=webrtc bundle-policy=max-bundle{stun}{relay}'
         sources = ' '.join(PipelineBuilder._camera_branch(cam, idx) for idx, cam in enumerate(cameras))
         return f'{webrtc_head} {sources}'
 

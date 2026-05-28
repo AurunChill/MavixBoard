@@ -68,11 +68,6 @@ class Settings:
     signal_server_ip: str = field(default_factory=lambda: os.getenv('SIGNAL_SERVER_IP', 'http://localhost'))
     signal_ws_url: str = field(default_factory=lambda: os.getenv('SIGNAL_WS_URL', ''))
     user_id: str = field(default_factory=lambda: os.getenv('USER_ID', ''))
-    # DRONE_ID / DRONE_TOKEN are baked into /etc/mavixboard/preset.env at
-    # .deb build time by the server. When both are set, the board uses
-    # DRONE_TOKEN for WS auth and skips on-boot registration (the server
-    # has already enrolled the drone). For dev runs without the .deb,
-    # both are empty and __main__ falls back to the local token file.
     drone_id: str = field(default_factory=lambda: os.getenv('DRONE_ID', ''))
     drone_token: str = field(default_factory=lambda: os.getenv('DRONE_TOKEN', ''))
     stun_server: str = field(default_factory=lambda: os.getenv('STUN_SERVER', 'stun://stun.l.google.com:19302'))
@@ -89,6 +84,15 @@ class Settings:
     # Пример: `socket://127.0.0.1:5764` (TCP-порт UART4 в Betaflight SITL).
     # Если задано — board подключается сразу к этому URL и не сканит /dev/tty*.
     crsf_url: str = field(default_factory=lambda: os.getenv('CRSF_URL', ''))
+
+    # Отладка/проблемный NAT: если True, webrtcbin получает
+    # ice-transport-policy=relay и использует ТОЛЬКО relay-кандидаты
+    # (host/srflx отбрасываются). Аналог force_relay в desktop. Нужно,
+    # когда прямые и srflx-пары не поднимаются и связь должна гарантированно
+    # идти через TURN. Включается env FORCE_RELAY=1/true/yes/on.
+    force_relay: bool = field(
+        default_factory=lambda: os.getenv('FORCE_RELAY', '').strip().lower() in ('1', 'true', 'yes', 'on')
+    )
 
     token_path: Path = _BASE / 'token'
     log_path: Path = field(default_factory=lambda: _resolve_log_dir() / f'mavixboard_{date.today()}.log')
