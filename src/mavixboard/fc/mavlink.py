@@ -1,5 +1,8 @@
+"""Разбор отдельных MAVLINK-сообщений в единые телеметрийные словари."""
+
+from __future__ import annotations
+
 import struct
-from typing import Optional
 
 IMPORTANT_MSGS = {0, 1, 22, 77, 253, 33, 74, 147}
 MSG_HEARTBEAT = 0
@@ -17,8 +20,8 @@ MAV_SEVERITY = {
     4: 'WARNING', 5: 'NOTICE', 6: 'INFO', 7: 'DEBUG',
 }
 
-# Human-readable names for MAV_RESULT (COMMAND_ACK.result). PX4 uses
-# these to tell us why an arm/set-mode/etc was refused.
+# Человекочитаемые имена для MAV_RESULT (COMMAND_ACK.result). PX4
+# использует их, чтобы объяснить, почему arm/set-mode и т.п. отклонён.
 MAV_RESULT = {
     0: 'ACCEPTED',
     1: 'TEMPORARILY_REJECTED',
@@ -29,17 +32,19 @@ MAV_RESULT = {
     6: 'CANCELLED',
 }
 
-# Common commands we send and want pretty names for in the log.
+# Часто отправляемые команды, для которых хотим красивые имена в логе.
 MAV_CMD_NAMES = {
     176: 'DO_SET_MODE',
     400: 'COMPONENT_ARM_DISARM',
 }
 
 
-def decode_statustext(msg) -> dict | None:
+def decode_statustext(msg: object) -> dict | None:
     """STATUSTEXT (msgid 253) — человекочитаемое сообщение от PX4.
-    Используется FC чтобы сказать «Arming denied: throttle above MIN»,
-    «Pre-arm: Battery low» и т.п. — ровно то что отображает QGC."""
+
+    Используется полётником, чтобы сказать «Arming denied: throttle above
+    MIN», «Pre-arm: Battery low» и т.п. — ровно то, что отображает QGC.
+    """
     try:
         msg_id = msg.get_msgId()
     except AttributeError:
@@ -48,7 +53,7 @@ def decode_statustext(msg) -> dict | None:
         return None
     sev = getattr(msg, 'severity', 6)
     text = getattr(msg, 'text', '')
-    # pymavlink decodes text as bytes for v1, str for v2 — нормализуем.
+    # pymavlink декодирует text как bytes для v1 и str для v2 — нормализуем.
     if isinstance(text, (bytes, bytearray)):
         text = text.split(b'\x00', 1)[0].decode('utf-8', errors='replace')
     elif isinstance(text, str):
@@ -63,11 +68,14 @@ def decode_statustext(msg) -> dict | None:
     }
 
 
-def decode_heartbeat_armed(msg) -> dict | None:
-    """Pull the armed bit out of HEARTBEAT.base_mode. PX4 sets
-    MAV_MODE_FLAG_SAFETY_ARMED (0x80) when motors are actually live —
-    this is what tells us if a previous COMMAND_ARM_DISARM stuck or
-    PX4 auto-disarmed us right after (e.g. COM_DISARM_LAND timeout)."""
+def decode_heartbeat_armed(msg: object) -> dict | None:
+    """Извлекает бит armed из HEARTBEAT.base_mode.
+
+    PX4 выставляет MAV_MODE_FLAG_SAFETY_ARMED (0x80), когда моторы реально
+    под напряжением — именно это говорит нам, закрепилась ли предыдущая
+    COMMAND_ARM_DISARM или PX4 авто-дизармнул нас сразу после (например,
+    по таймауту COM_DISARM_LAND).
+    """
     try:
         msg_id = msg.get_msgId()
     except AttributeError:
@@ -85,11 +93,13 @@ def decode_heartbeat_armed(msg) -> dict | None:
     }
 
 
-def decode_command_ack(msg) -> dict | None:
-    """Pull COMMAND_ACK (msgid 77) into a dict with human-readable
-    names. PX4 returns ACK on every COMMAND_LONG (DO_SET_MODE,
-    COMPONENT_ARM_DISARM, …); the result code tells us *why* a
-    command was refused — invaluable for «why won't it arm» debug."""
+def decode_command_ack(msg: object) -> dict | None:
+    """Преобразует COMMAND_ACK (msgid 77) в словарь с человекочитаемыми именами.
+
+    PX4 возвращает ACK на каждый COMMAND_LONG (DO_SET_MODE,
+    COMPONENT_ARM_DISARM, …); код результата объясняет, почему команда
+    отклонена — бесценно для отладки «почему не армится».
+    """
     try:
         msg_id = msg.get_msgId()
     except AttributeError:
@@ -109,11 +119,13 @@ def decode_command_ack(msg) -> dict | None:
     }
 
 
-def decode_battery(msg) -> dict | None:
-    """Extract a uniform {'type':'battery', voltage, current, remaining}
-    dict from either SYS_STATUS (msgid 1) or BATTERY_STATUS (msgid 147).
-    Returns None if the message isn't battery-related or fields are
-    «unknown» sentinels (UINT16_MAX / -1)."""
+def decode_battery(msg: object) -> dict | None:
+    """Извлекает единый словарь {'type':'battery', voltage, current, remaining}.
+
+    Источник — SYS_STATUS (msgid 1) или BATTERY_STATUS (msgid 147).
+    Возвращает None, если сообщение не про батарею или поля содержат
+    «неизвестные» маркеры (UINT16_MAX / -1).
+    """
     try:
         msg_id = msg.get_msgId()
     except AttributeError:
@@ -132,7 +144,7 @@ def decode_battery(msg) -> dict | None:
         }
     if msg_id == MSG_BATTERY_STATUS:
         cells = getattr(msg, 'voltages', None) or []
-        # voltages[] is per-cell in mV with 0xFFFF marking «not present».
+        # voltages[] — напряжение по ячейкам в mV, 0xFFFF означает «нет ячейки».
         total_mv = sum(v for v in cells if 0 < v < 0xFFFF)
         if total_mv == 0:
             return None
@@ -146,6 +158,7 @@ def decode_battery(msg) -> dict | None:
         }
     return None
 
+
 MAV_AUTOPILOT = {0: 'generic', 3: 'ardupilot', 12: 'px4'}
 MAV_TYPE = {
     0: 'generic', 1: 'fixed_wing', 2: 'quadrotor', 4: 'helicopter',
@@ -153,7 +166,7 @@ MAV_TYPE = {
 }
 
 
-def parse_msg_id(data: bytes) -> Optional[int]:
+def parse_msg_id(data: bytes) -> int | None:
     if len(data) < 8:
         return None
     if data[0] == 0xFE:
@@ -164,9 +177,11 @@ def parse_msg_id(data: bytes) -> Optional[int]:
 
 
 def should_throttle_msg(msg_id: int | None, counters: list[int]) -> bool:
-    """Return True if message must be sent. Uses 20:1 throttle for non-important msgs.
+    """Возвращает True, если сообщение нужно отправить.
 
-    `counters` is a 300-int list mutated in place: incremented for each non-important msg.
+    Для неважных сообщений применяет троттлинг 20:1. `counters` — список
+    из 300 чисел, мутируется на месте: инкрементируется для каждого
+    неважного сообщения.
     """
     if msg_id is None or msg_id >= 300:
         return False

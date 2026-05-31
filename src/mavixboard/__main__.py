@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import signal
 
@@ -29,14 +31,15 @@ def _init_dirs() -> None:
 
 
 def _build_pipeline() -> GStreamerPipe | None:
-    # force_update=False: re-use cached calibration when the device name
-    # matches a previously-saved Camera (~/.local/share/mavixboard/<name>.json).
-    # If a different camera is plugged in (new name) or the cache was cleared
-    # by CameraWatcher detecting a device-set change, CameraRegistry._scan
-    # falls through to calibration for that specific device.
+    # force_update=False: переиспользуем кэшированную калибровку, когда имя
+    # устройства совпадает с ранее сохранённой Camera
+    # (~/.local/share/mavixboard/<name>.json). Если подключена другая камера
+    # (новое имя) или кэш сброшен из-за того, что CameraWatcher заметил смену
+    # набора устройств, CameraRegistry._scan уходит на калибровку именно
+    # этого устройства.
     cameras = CameraManager.get_cameras(force_update=False)
     if not cameras:
-        logger.error('cameras not found')
+        logger.error('[app] камеры не найдены')
         return None
     return GStreamerPipe(cameras)
 
@@ -44,29 +47,30 @@ def _build_pipeline() -> GStreamerPipe | None:
 async def _ensure_registered(api_session: api.ApiSession, token: str) -> bool:
     while True:
         if not await api_session.connection_check():
-            logger.error('signal server not reachable')
+            logger.error('[app] сигнальный сервер недоступен')
             await asyncio.sleep(5)
             continue
         if await api_session.send_register(drone_token=token):
-            logger.info('drone is registered')
+            logger.info('[app] дрон зарегистрирован')
             return True
-        logger.error('register error, retrying')
+        logger.error('[app] ошибка регистрации, повтор')
         await asyncio.sleep(5)
 
 
 async def _resolve_drone_token() -> str:
-    """Decide which token to use for WS auth.
+    """Определяет, какой токен использовать для WS-авторизации.
 
-    Production path (.deb-installed): preset.env populates settings.drone_token
-    (and DRONE_ID) — the server has already created the Drone row, so we
-    just use the baked-in token and skip the on-boot register call.
+    Production-путь: preset.env заполняет
+    settings.drone_token (и DRONE_ID) — сервер уже создал строку Drone,
+    поэтому просто используем зашитый токен и пропускаем регистрацию при
+    старте.
 
-    Dev path (no preset.env): generate a token locally, persist it, and
-    register on every boot (drone_service.register is idempotent for the
-    same drone_id, so this is safe across restarts).
+    Dev-путь (нет preset.env): генерируем токен локально, сохраняем его и
+    регистрируемся при каждом запуске (drone_service.register идемпотентна
+    для одного drone_id, поэтому это безопасно между перезапусками).
     """
     if settings.drone_token:
-        logger.info('using DRONE_TOKEN from preset.env (drone_id=%s)', settings.drone_id or '<unset>')
+        logger.info('[app] используется DRONE_TOKEN из preset.env (drone_id=%s)', settings.drone_id or '<unset>')
         return settings.drone_token
 
     token = storage.get()
@@ -74,10 +78,10 @@ async def _resolve_drone_token() -> str:
         token = generator.generate(length=64)
         storage.write(token)
 
-    # Dev-only: phone home so a Drone row exists. With auth now enforced
-    # on /drones/register we'd need a user JWT — in dev that means a
-    # separate `mavixboard-enroll` script (out of scope here); for the
-    # common case where the .deb path is used this branch is not hit.
+    # Только для dev: «звоним домой», чтобы строка Drone существовала. Теперь,
+    # когда авторизация на /drones/register обязательна, понадобился бы
+    # пользовательский JWT — в dev это означает отдельный скрипт
+    # `mavixboard-enroll` (вне области этого кода);
     api_session = await api.ApiSession.create()
     try:
         await _ensure_registered(api_session, token)
@@ -89,9 +93,9 @@ async def _resolve_drone_token() -> str:
 async def main() -> None:
     _init_dirs()
 
-    # The GLib main loop must be running BEFORE any GStreamer pipeline is
-    # built — Gst.Bus.add_watch and GLib.idle_add only fire while it
-    # iterates, and asyncio does not pump the GLib default context.
+    # Главный цикл GLib должен работать ДО сборки любого GStreamer-пайплайна:
+    # Gst.Bus.add_watch и GLib.idle_add срабатывают только пока он крутится, а
+    # asyncio не прокачивает дефолтный контекст GLib.
     glib = GLibMainLoopThread()
     glib.start()
 
@@ -109,19 +113,21 @@ async def main() -> None:
         watcher=watcher,
     )
 
-    # systemd sends SIGTERM on stop; SIGINT comes from Ctrl+C in dev.
-    # Both should trigger a graceful shutdown of the coordinator (which
-    # owns the pipeline / data channels / FC link), then the GLib loop.
+    # systemd шлёт SIGTERM при остановке; SIGINT приходит от Ctrl+C в dev.
+    # Оба должны запускать корректное завершение координатора (который владеет
+    # пайплайном / data-каналами / связью с FC), а затем цикла GLib.
     loop = asyncio.get_running_loop()
+
     def _request_stop() -> None:
-        logger.info('shutdown signal received; stopping coordinator')
+        logger.info('[app] получен сигнал завершения, останавливаем координатор')
         coordinator.stop()
+
     for sig in (signal.SIGTERM, signal.SIGINT):
         try:
             loop.add_signal_handler(sig, _request_stop)
         except (NotImplementedError, RuntimeError):
-            # Not all platforms support add_signal_handler; tests on
-            # threads-with-no-default-loop hit the RuntimeError branch.
+            # Не все платформы поддерживают add_signal_handler; тесты на
+            # потоках без дефолтного loop попадают в ветку RuntimeError.
             pass
 
     try:

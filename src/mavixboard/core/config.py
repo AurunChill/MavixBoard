@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import os
 from dataclasses import dataclass, field
 from datetime import date
@@ -5,12 +7,12 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-# Load env in priority order:
-#   1. /etc/mavixboard/preset.env — installed by the .deb on a real drone;
-#      contains USER_ID and any system-wide settings the server baked in
-#      at build time. Loaded WITHOUT override so a local .env on a dev
-#      machine still wins for everything except what's locked.
-#   2. ./.env (project local) — development override.
+# Загружаем env в порядке приоритета:
+#   1. /etc/mavixboard/preset.env — устанавливается install.sh на реальном дроне;
+#      содержит USER_ID и любые системные настройки, которые сервер зашил на
+#      этапе сборки. Загружается БЕЗ override, чтобы локальный .env на dev-машине
+#      всё ещё выигрывал по всему, кроме залоченного.
+#   2. ./.env (локально в проекте) — переопределение для разработки.
 _PRESET_PATH = Path('/etc/mavixboard/preset.env')
 if _PRESET_PATH.is_file():
     load_dotenv(_PRESET_PATH, override=False)
@@ -20,8 +22,10 @@ _BASE = Path.home() / '.config' / 'mavixboard'
 
 
 def _find_project_root() -> Path | None:
-    """Walk up from this file to find the dev source tree's pyproject.toml.
-    Returns None when run from an installed package (no marker found)."""
+    """Поднимается вверх от этого файла в поисках pyproject.toml dev-дерева.
+
+    Возвращает None при запуске из установленного пакета (маркер не найден).
+    """
     cur = Path(__file__).resolve().parent
     for _ in range(6):
         if (cur / 'pyproject.toml').is_file():
@@ -36,13 +40,12 @@ _PROJECT_ROOT = _find_project_root()
 
 
 def _resolve_log_dir() -> Path:
-    """Pick a writable directory for log files.
+    """Выбирает доступную для записи директорию под лог-файлы.
 
-    .deb installations set MAVIXBOARD_LOG_DIR=/var/log/mavixboard via the
-    systemd unit (writable for the mavixboard user). Dev runs from the
-    source tree get <project>/_log. Falling back to ~/.local/state
-    handles the case of `python -m mavixboard` from an installed package
-    without the systemd env.
+    Production-установка (install.sh) задаёт MAVIXBOARD_LOG_DIR=/var/log/mavixboard
+    через systemd-юнит (доступно для записи пользователю mavixboard). Запуски из
+    исходников получают <project>/_log. Откат на ~/.local/state покрывает
+    случай `python -m mavixboard` из установленного пакета без systemd-окружения.
     """
     env_override = os.getenv('MAVIXBOARD_LOG_DIR')
     if env_override:
@@ -53,8 +56,8 @@ def _resolve_log_dir() -> Path:
 
 
 def _resolve_data_dir() -> Path:
-    """Same logic as _resolve_log_dir but for runtime data
-    (camera calibration cache, etc)."""
+    """Та же логика, что и в _resolve_log_dir, но для runtime-данных
+    (кэш калибровки камер и т.п.)."""
     env_override = os.getenv('MAVIXBOARD_DATA_DIR')
     if env_override:
         return Path(env_override)

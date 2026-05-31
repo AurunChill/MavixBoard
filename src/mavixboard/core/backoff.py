@@ -12,11 +12,11 @@ class ExponentialBackoff:
 
     def __post_init__(self) -> None:
         if self.initial <= 0:
-            raise ValueError('initial must be > 0')
+            raise ValueError('initial должен быть > 0')
         if self.multiplier < 1.0:
-            raise ValueError('multiplier must be >= 1')
+            raise ValueError('multiplier должен быть >= 1')
         if self.cap < self.initial:
-            raise ValueError('cap must be >= initial')
+            raise ValueError('cap должен быть >= initial')
         self._current = self.initial
 
     @property

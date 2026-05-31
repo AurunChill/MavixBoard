@@ -1,15 +1,15 @@
+"""Сборка gst-launch описаний пайплайнов WebRTC и ICE-URL для webrtcbin."""
+
 from __future__ import annotations
 
-import logging
 import os
 from typing import TYPE_CHECKING
 
 from mavixboard.core.config import settings
+from mavixboard.core.logger import logger
 
 if TYPE_CHECKING:
     from mavixboard.gstreamer.camera import Camera, CameraParams
-
-logger = logging.getLogger(__name__)
 
 
 def _normalize_scheme(raw: str, prefix: str) -> str:
@@ -82,7 +82,7 @@ def _redact_url(url: str) -> str:
 
 class PipelineBuilder:
     @staticmethod
-    def build_pipeline_description(cameras: list['Camera']) -> str:
+    def build_pipeline_description(cameras: list[Camera]) -> str:
         stun_url = _build_stun_url()
         turn_url = _build_turn_url()
         logger.info('[ice] stun-server=%s', stun_url or '(empty)')
@@ -104,7 +104,7 @@ class PipelineBuilder:
         return f'{webrtc_head} {sources}'
 
     @staticmethod
-    def _camera_branch(cam: 'Camera', idx: int) -> str:
+    def _camera_branch(cam: Camera, idx: int) -> str:
         p = cam.params[cam.param_index]
         pt = 96 + idx
         source = (
@@ -121,7 +121,7 @@ class PipelineBuilder:
         return f'{source} ! {q} ! {rtp} ! {caps} ! webrtc.sink_{idx}'
 
     @staticmethod
-    def build_available_param(cam_index: int, params: 'CameraParams') -> str:
+    def build_available_param(cam_index: int, params: CameraParams) -> str:
         return (
             f'v4l2src device=/dev/video{cam_index} ! '
             f'{PipelineBuilder._build_format(params.format)},'

@@ -1,4 +1,9 @@
+"""Кодирование и разбор кадров протокола CRSF (Crossfire) поверх UART."""
+
+from __future__ import annotations
+
 import struct
+from collections.abc import Iterator
 
 BAUDRATE = 420000
 CH_MIN, CH_CENTER, CH_MAX = 172, 992, 1811
@@ -17,52 +22,56 @@ class CRSF:
     }
 
     @staticmethod
-    def crc8(data):
+    def crc8(data: bytes) -> int:
         crc = 0
-        for b in data:
-            crc ^= b
+        for byte in data:
+            crc ^= byte
             for _ in range(8):
                 crc = ((crc << 1) ^ 0xD5 if crc & 0x80 else crc << 1) & 0xFF
         return crc
 
     @staticmethod
-    def _frame(ftype, payload, addr=0xC8):
+    def _frame(ftype: int, payload: bytes, addr: int = 0xC8) -> bytes:
         body = bytes([ftype]) + payload
         return bytes([addr, len(body) + 1]) + body + bytes([CRSF.crc8(body)])
 
     @staticmethod
-    def rc_frame(channels):
+    def rc_frame(channels: list[int]) -> bytes:
         ch = (list(channels) + [CH_CENTER] * 16)[:16]
         bits = 0
-        for i, v in enumerate(ch):
-            bits |= max(0, min(0x7FF, v)) << (i * 11)
+        for i, value in enumerate(ch):
+            bits |= max(0, min(0x7FF, value)) << (i * 11)
         return CRSF._frame(0x16, bits.to_bytes(22, 'little'))
 
     @staticmethod
-    def link_stats_frame(rssi=-50, lq=100):
+    def link_stats_frame(rssi: int = -50, lq: int = 100) -> bytes:
         r = rssi & 0xFF
         return CRSF._frame(0x14, bytes([r, r, lq, 10, 0, 4, 2, r, lq, 10]))
 
     @staticmethod
-    def ping_frame():
+    def ping_frame() -> bytes:
         return CRSF._frame(0x28, bytes([0xC8, 0xEE]))
 
     @staticmethod
-    def parse_frames(buf):
+    def parse_frames(buf: bytearray) -> Iterator[tuple[int, bytes]]:
         while len(buf) >= 4:
             if buf[0] not in (0xC8, 0xEE, 0xEC, 0x00):
-                buf.pop(0); continue
+                buf.pop(0)
+                continue
             fl = buf[1]
             if not 2 <= fl <= 62:
-                buf.pop(0); continue
+                buf.pop(0)
+                continue
             total = fl + 2
-            if len(buf) < total: break
-            raw = bytes(buf[:total]); del buf[:total]
+            if len(buf) < total:
+                break
+            raw = bytes(buf[:total])
+            del buf[:total]
             if CRSF.crc8(raw[2:-1]) == raw[-1]:
                 yield raw[2], raw[3:-1]
 
     @staticmethod
-    def decode_telemetry(ftype, payload):
+    def decode_telemetry(ftype: int, payload: bytes) -> dict | None:
         p = payload
         if ftype == 0x08 and len(p) >= 8:
             return {'type': 'battery', 'voltage': int.from_bytes(p[0:2], 'big') / 10,
@@ -73,27 +82,34 @@ class CRSF:
                     'lon': struct.unpack('>i', p[4:8])[0] / 1e7,
                     'satellites': p[14], 'alt': int.from_bytes(p[12:14], 'big', signed=True) - 1000}
         if ftype == 0x1E and len(p) >= 6:
-            r = lambda i: round(struct.unpack('>h', p[i:i+2])[0] / 10000 * 57.2958, 1)
-            return {'type': 'attitude', 'pitch': r(0), 'roll': r(2), 'yaw': r(4)}
+            def deg(i: int) -> float:
+                return round(struct.unpack('>h', p[i:i + 2])[0] / 10000 * 57.2958, 1)
+
+            return {'type': 'attitude', 'pitch': deg(0), 'roll': deg(2), 'yaw': deg(4)}
         if ftype == 0x21:
-            try: return {'type': 'flight_mode', 'mode': p.rstrip(b'\x00').decode('ascii')}
-            except UnicodeDecodeError: pass
+            try:
+                return {'type': 'flight_mode', 'mode': p.rstrip(b'\x00').decode('ascii')}
+            except UnicodeDecodeError:
+                pass
         if ftype == 0x29:
-            try: return {'type': 'device_info', 'name': p[2:].split(b'\x00')[0].decode('ascii')}
-            except UnicodeDecodeError: pass
+            try:
+                return {'type': 'device_info', 'name': p[2:].split(b'\x00')[0].decode('ascii')}
+            except UnicodeDecodeError:
+                pass
         return None
 
     @staticmethod
-    def axis_to_crsf(v, dz=0.05):
-        if abs(v) < dz: return CH_CENTER
+    def axis_to_crsf(v: float, dz: float = 0.05) -> int:
+        if abs(v) < dz:
+            return CH_CENTER
         n = (v - dz) / (1 - dz) if v > 0 else (v + dz) / (1 - dz)
         return max(CH_MIN, min(CH_MAX, int(CH_CENTER + n * (CH_MAX - CH_CENTER))))
 
     @staticmethod
-    def throttle_to_crsf(v):
+    def throttle_to_crsf(v: float) -> int:
         n = max(0.0, min(1.0, (v + 1) / 2))
         return int(CH_MIN + n * (CH_MAX - CH_MIN))
 
     @staticmethod
-    def crsf_to_us(v):
+    def crsf_to_us(v: int) -> float:
         return 1500 + (v - CH_CENTER) / 1.6

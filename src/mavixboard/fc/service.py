@@ -1,3 +1,5 @@
+"""Сервис полётника: следит за подключением FC и переподключает при обрыве."""
+
 from __future__ import annotations
 
 import asyncio
@@ -47,9 +49,12 @@ class FCService:
         self._on_change = cb
 
     def set_telemetry_callback(self, cb: Callable[[dict], None] | None) -> None:
-        """Forwarded to whichever controller is active (currently only the
-        CRSF one decodes telemetry; MAVLink could grow the same hook later).
-        Idempotent — coordinator can wire it once per session."""
+        """Пробрасывается активному контроллеру.
+
+        Сейчас телеметрию декодирует только CRSF-контроллер; MAVLINK может
+        обзавестись тем же хуком позже. Идемпотентно — координатор может
+        подключить колбэк один раз за сессию.
+        """
         self._on_telemetry = cb
         if self._controller is not None:
             setter = getattr(self._controller, 'set_telemetry_callback', None)
@@ -74,13 +79,15 @@ class FCService:
             self._loop_task.cancel()
             try:
                 await self._loop_task
-            except (asyncio.CancelledError, Exception):
+            except asyncio.CancelledError:
+                pass
+            except Exception:
                 pass
             self._loop_task = None
         await self._teardown_controller()
 
     async def _scan_loop(self) -> None:
-        logger.info('[fc-service] scan loop started')
+        logger.info('[fc-service] цикл сканирования запущен')
         assert self._stop_event is not None
         try:
             while not self._stop_event.is_set():
@@ -95,7 +102,7 @@ class FCService:
         except asyncio.CancelledError:
             return
         finally:
-            logger.info('[fc-service] scan loop stopped')
+            logger.info('[fc-service] цикл сканирования остановлен')
 
     async def _activate_controller(self, controller: FlightController) -> None:
         controller.set_packet_callback(self._on_packet)
@@ -104,12 +111,12 @@ class FCService:
             setter(self._on_telemetry)
         await controller.start()
         self._controller = controller
-        logger.info('[fc-service] FC connected: %s / %s', controller.kind, controller.name)
+        logger.info('[fc-service] FC подключён: %s / %s', controller.kind, controller.name)
         if self._on_change:
             try:
                 self._on_change(controller.kind, controller.name)
             except Exception as exc:
-                logger.warning('[fc-service] change callback error: %s', exc)
+                logger.warning('[fc-service] ошибка change-колбэка: %s', exc)
 
     async def _teardown_controller(self) -> None:
         if self._controller is None:
@@ -119,10 +126,10 @@ class FCService:
         try:
             await ctrl.close()
         except Exception as exc:
-            logger.warning('[fc-service] controller close error: %s', exc)
-        logger.info('[fc-service] FC disconnected')
+            logger.warning('[fc-service] ошибка закрытия контроллера: %s', exc)
+        logger.info('[fc-service] FC отключён')
         if self._on_change:
             try:
                 self._on_change(None, '')
             except Exception as exc:
-                logger.warning('[fc-service] change callback error: %s', exc)
+                logger.warning('[fc-service] ошибка change-колбэка: %s', exc)

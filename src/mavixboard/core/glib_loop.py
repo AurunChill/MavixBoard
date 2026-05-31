@@ -1,12 +1,12 @@
-"""GLib main loop hosted in a daemon thread.
+"""Главный цикл GLib, размещённый в daemon-потоке.
 
-GStreamer's bus watch (`Gst.Bus.add_watch`) and `GLib.idle_add` callbacks
-only fire while a `GLib.MainLoop` is iterating. asyncio's event loop
-does not pump GLib's default context, so without this thread the
-`webrtcbin` signals, bus error/state-changed messages, and every
-`idle_add` call from the pipeline code silently never run.
+Bus watch GStreamer (`Gst.Bus.add_watch`) и колбэки `GLib.idle_add`
+срабатывают только пока крутится `GLib.MainLoop`. Event loop asyncio не
+прокачивает дефолтный контекст GLib, поэтому без этого потока сигналы
+`webrtcbin`, сообщения bus error/state-changed и каждый вызов `idle_add`
+из кода пайплайна молча не выполняются.
 
-Usage:
+Использование:
 
     from mavixboard.core.glib_loop import GLibMainLoopThread
 
@@ -27,7 +27,7 @@ from mavixboard.core.logger import logger
 
 
 class GLibMainLoopThread:
-    """Owns one GLib.MainLoop and the daemon thread that iterates it."""
+    """Владеет одним GLib.MainLoop и daemon-потоком, который его крутит."""
 
     def __init__(self) -> None:
         self._loop: GLib.MainLoop | None = None
@@ -44,10 +44,10 @@ class GLibMainLoopThread:
             daemon=True,
         )
         self._thread.start()
-        # Wait briefly so callers can rely on the loop actually running
-        # before they create bus watches / schedule idle_add calls.
+        # Немного ждём, чтобы вызывающий код мог полагаться на реально
+        # запущенный цикл, прежде чем создавать bus watch / планировать idle_add.
         self._started_evt.wait(timeout=2.0)
-        logger.info('[glib] main loop thread started')
+        logger.info('[glib] поток главного цикла запущен')
 
     def _run(self) -> None:
         assert self._loop is not None
@@ -55,7 +55,7 @@ class GLibMainLoopThread:
         try:
             self._loop.run()
         except Exception as exc:
-            logger.exception('[glib] main loop crashed: %s', exc)
+            logger.exception('[glib] главный цикл упал: %s', exc)
 
     def stop(self, join_timeout: float = 2.0) -> None:
         if self._loop is None:
@@ -64,7 +64,7 @@ class GLibMainLoopThread:
             self._loop.quit()
         if self._thread is not None and self._thread.is_alive():
             self._thread.join(timeout=join_timeout)
-        logger.info('[glib] main loop thread stopped')
+        logger.info('[glib] поток главного цикла остановлен')
         self._loop = None
         self._thread = None
 

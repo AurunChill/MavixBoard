@@ -1,3 +1,7 @@
+"""Сканирование и калибровка USB-камер через v4l2 и пробные GStreamer-пайплайны."""
+
+from __future__ import annotations
+
 import dataclasses
 import json
 import shutil
@@ -5,12 +9,13 @@ import subprocess
 from dataclasses import dataclass
 
 import gi
+
 gi.require_version('Gst', '1.0')
 from gi.repository import Gst
 
-from mavixboard.gstreamer.pipeline import PipelineBuilder
 from mavixboard.core.config import settings
 from mavixboard.core.logger import logger
+from mavixboard.gstreamer.pipeline import PipelineBuilder
 
 
 @dataclass
@@ -18,7 +23,7 @@ class CameraParams:
     width: int
     height: int
     fps: int
-    format: str  # now YUYV and MJPG is available
+    format: str  # сейчас доступны YUYV и MJPG
 
 
 @dataclass
@@ -34,7 +39,7 @@ class Camera:
         path.write_text(json.dumps(dataclasses.asdict(self), indent=2))
 
     @classmethod
-    def get(cls, name: str) -> 'Camera | None':
+    def get(cls, name: str) -> Camera | None:
         path = settings.data_path / f'{name}.json'
         if not path.exists():
             return None
@@ -58,7 +63,7 @@ class V4l2Scanner:
             return {}
         result = subprocess.run([self.command, '--list-devices'], capture_output=True, text=True)
         if result.returncode != 0 and '/dev/video' not in result.stderr:
-            logger.error(f'USB camera list error: {result.stderr}')
+            logger.error('[camera] ошибка получения списка USB-камер: %s', result.stderr)
             return {}
         device_names: dict[str, str] = {}
         cur_name: str | None = None
@@ -121,7 +126,7 @@ class V4l2Scanner:
 class CameraCalibrator:
     @staticmethod
     def calibrate(device_index: int, raw_params: set[tuple[int, int, int, str]]) -> list[CameraParams]:
-        logger.info('Starting camera calibration')
+        logger.info('[camera] запускаю калибровку камеры')
         supported_params: list[CameraParams] = []
         seen: set[tuple[int, int, int]] = set()
         for width, height, fps, format_ in raw_params:
@@ -140,12 +145,13 @@ class CameraCalibrator:
                 if ret == Gst.StateChangeReturn.SUCCESS and state == Gst.State.PLAYING:
                     seen.add(key)
                     supported_params.append(camera_param)
-            except Exception as e:
-                logger.debug(f"Failed {width}x{height}@{fps} ({format_}): {e}")
+            except Exception as exc:
+                logger.debug('[camera] не удалось %dx%d@%d (%s): %s',
+                             width, height, fps, format_, exc)
             finally:
                 if pipeline:
                     pipeline.set_state(Gst.State.NULL)
-                    pipeline.get_state(Gst.SECOND * 1)  # wait for v4l2 fd release
+                    pipeline.get_state(Gst.SECOND * 1)  # ждём освобождения v4l2 fd
         return supported_params
 
 
@@ -157,18 +163,18 @@ class CameraRegistry:
     ) -> None:
         self.scanner: V4l2Scanner = scanner if scanner is not None else V4l2Scanner()
         self.calibrator: CameraCalibrator = calibrator if calibrator is not None else CameraCalibrator()
-        self.cached_cams_: list[Camera] | None = None
+        self._cached_cams: list[Camera] | None = None
 
     def clear_cache(self) -> None:
-        self.cached_cams_ = None
+        self._cached_cams = None
 
     def get_cameras(self, force_update: bool = False) -> list[Camera]:
-        if not force_update and self.cached_cams_:
-            return self.cached_cams_
+        if not force_update and self._cached_cams:
+            return self._cached_cams
         cameras = self._scan(force_update=force_update)
         for camera in cameras:
             camera.save()
-        self.cached_cams_ = cameras
+        self._cached_cams = cameras
         return cameras
 
     def get_by_index(self, index: int) -> Camera | None:
@@ -176,9 +182,9 @@ class CameraRegistry:
 
     def _scan(self, force_update: bool = False) -> list[Camera]:
         if not self.scanner.is_available():
-            logger.warning('v4l-utils is not installed')
+            logger.warning('[camera] v4l-utils не установлен')
             return []
-        logger.warning('Calibration is starting!')
+        logger.warning('[camera] начинается калибровка!')
         device_names = self.scanner.get_device_names()
         capture_devices = self.scanner.filter_capture_devices(device_names)
         cameras: list[Camera] = []
@@ -187,17 +193,17 @@ class CameraRegistry:
             name = device_names[device_path]
             saved = Camera.get(name)
             if saved and not force_update:
-                # The saved JSON has the device_index from a previous run;
-                # after a USB unplug+replug the kernel may reassign the
-                # camera to a different /dev/videoN. Refresh the index to
-                # the *current* path so the pipeline opens the right node,
-                # and persist so subsequent loads have the up-to-date value.
+                # В сохранённом JSON лежит device_index с прошлого запуска;
+                # после переподключения USB ядро может назначить камере
+                # другой /dev/videoN. Обновляем индекс на *текущий* путь,
+                # чтобы пайплайн открыл нужный узел, и сохраняем, чтобы
+                # последующие загрузки имели актуальное значение.
                 if saved.device_index != device_index:
                     saved.device_index = device_index
                     try:
                         saved.save()
                     except OSError as exc:
-                        logger.warning('camera save error: %s', exc)
+                        logger.warning('[camera] ошибка сохранения камеры: %s', exc)
                 cameras.append(saved)
                 continue
             raw_params = self.scanner.parse_camera_params(device_path)

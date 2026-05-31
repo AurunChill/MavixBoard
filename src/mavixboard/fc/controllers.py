@@ -1,3 +1,5 @@
+"""Контроллеры полётника: чтение/запись по MAVLINK и CRSF поверх UART."""
+
 from __future__ import annotations
 
 import asyncio
@@ -12,7 +14,6 @@ from mavixboard.fc.crsf import BAUDRATE as CRSF_BAUDRATE
 from mavixboard.fc.crsf import CRSF
 from mavixboard.fc.mavlink import (
     MAV_AUTOPILOT,
-    MAV_TYPE,
     MSG_HEARTBEAT,
     decode_battery,
     decode_command_ack,
@@ -48,7 +49,7 @@ class MavlinkController:
         self._task: asyncio.Task | None = None
         self._closed = False
         self._counters = [0] * 300
-        # Track armed-state edge so we only log on transitions.
+        # Отслеживаем фронт armed-состояния, чтобы логировать только переходы.
         self._last_armed: bool | None = None
 
     @property
@@ -59,10 +60,12 @@ class MavlinkController:
         self._on_packet = cb
 
     def set_telemetry_callback(self, cb: Callable[[dict], None] | None) -> None:
-        """Mirror of CrsfController.set_telemetry_callback. PX4/ArduPilot
-        battery state is emitted as the same {'type':'battery', voltage,
-        current, remaining} dict so the GCS doesn't care which FC the
-        bytes came from."""
+        """Аналог CrsfController.set_telemetry_callback.
+
+        Состояние батареи PX4/ArduPilot отдаётся тем же словарём
+        {'type':'battery', voltage, current, remaining}, чтобы GCS было
+        всё равно, от какого полётника пришли байты.
+        """
         self._on_telemetry = cb
 
     async def start(self) -> None:
@@ -78,7 +81,9 @@ class MavlinkController:
             self._task.cancel()
             try:
                 await self._task
-            except (asyncio.CancelledError, Exception):
+            except asyncio.CancelledError:
+                pass
+            except Exception:
                 pass
             self._task = None
         await asyncio.to_thread(self._safe_close_conn)
@@ -88,7 +93,7 @@ class MavlinkController:
             if self._conn is not None:
                 self._conn.close()
         except Exception as exc:
-            logger.debug('[mavlink] close error: %s', exc)
+            logger.debug('[mavlink] ошибка закрытия: %s', exc)
 
     async def send(self, data: bytes) -> None:
         if self._closed or self._conn is None:
@@ -99,15 +104,15 @@ class MavlinkController:
         try:
             self._conn.write(data)
         except Exception as exc:
-            logger.warning('[mavlink] write error: %s', exc)
+            logger.warning('[mavlink] ошибка записи: %s', exc)
 
     async def _read_loop(self) -> None:
-        logger.info('[mavlink] read loop started')
-        # Count consecutive recv failures. pyserial's "device reports
-        # readiness to read but returned no data" repeatedly fires when
-        # the FC is unplugged — without a circuit-breaker the loop spins
-        # at 100% CPU spamming logs. After a few in a row we close the
-        # controller so FCService's scan loop picks up the disconnection.
+        logger.info('[mavlink] цикл чтения запущен')
+        # Считаем подряд идущие ошибки recv. Pyserial-овская «device
+        # reports readiness to read but returned no data» сыплется при
+        # отключении полётника — без circuit-breaker'а цикл крутится на
+        # 100% CPU и забивает логи. После нескольких подряд закрываем
+        # контроллер, чтобы scan-loop FCService подхватил отключение.
         consecutive_errors = 0
         ERROR_THRESHOLD = 5
         try:
@@ -116,11 +121,11 @@ class MavlinkController:
                 if errored:
                     consecutive_errors += 1
                     if consecutive_errors >= ERROR_THRESHOLD:
-                        logger.info('[mavlink] %d consecutive recv errors, closing controller',
+                        logger.info('[mavlink] %d ошибок recv подряд, закрываю контроллер',
                                     consecutive_errors)
                         self._closed = True
                         break
-                    # Brief sleep so we don't tight-loop on a busted device.
+                    # Короткая пауза, чтобы не крутиться вплотную на сбойном устройстве.
                     await asyncio.sleep(0.1)
                     continue
                 consecutive_errors = 0
@@ -130,33 +135,33 @@ class MavlinkController:
                 msg_id = parse_msg_id(raw)
                 if msg_id == MSG_HEARTBEAT and msg.get_srcSystem() != 255:
                     self.name = MAV_AUTOPILOT.get(getattr(msg, 'autopilot', 0), 'MAVLink FC')
-                # HEARTBEAT carries the *real* armed state in base_mode.
-                # Logging the transition tells us whether a previous
-                # COMMAND_ARM_DISARM actually stuck or PX4 auto-disarmed.
+                # HEARTBEAT несёт *реальное* armed-состояние в base_mode.
+                # Лог перехода показывает, закрепилась ли предыдущая
+                # COMMAND_ARM_DISARM или PX4 авто-дизармнул.
                 hb = decode_heartbeat_armed(msg) if msg_id == MSG_HEARTBEAT else None
                 if hb is not None and msg.get_srcSystem() != 255:
                     if self._last_armed is None or hb['armed'] != self._last_armed:
-                        logger.info('[mavlink] FC armed=%s (custom_mode=0x%08x system_status=%d)',
+                        logger.info('[mavlink] полётник armed=%s (custom_mode=0x%08x system_status=%d)',
                                     hb['armed'], hb['custom_mode'], hb['system_status'])
                         self._last_armed = hb['armed']
                         if self._on_telemetry is not None:
                             try:
                                 self._on_telemetry(hb)
                             except Exception as exc:
-                                logger.warning('[mavlink] hb callback error: %s', exc)
-                # Battery telemetry comes from SYS_STATUS (1) or
-                # BATTERY_STATUS (147). Decode and fire BEFORE the
-                # throttle gate so we don't drop battery just because
-                # it shares a slot with high-rate junk.
+                                logger.warning('[mavlink] ошибка hb-колбэка: %s', exc)
+                # Телеметрия батареи приходит из SYS_STATUS (1) или
+                # BATTERY_STATUS (147). Декодируем и отдаём ДО throttle-
+                # гейта, чтобы не выбросить батарею только из-за того, что
+                # она делит слот с высокочастотным мусором.
                 battery = decode_battery(msg)
                 if battery is not None and self._on_telemetry is not None:
                     try:
                         self._on_telemetry(battery)
                     except Exception as exc:
-                        logger.warning('[mavlink] telemetry callback error: %s', exc)
-                # COMMAND_ACK — the response to every COMMAND_LONG we
-                # send (SET_MODE / ARM_DISARM). Logged on board AND
-                # forwarded to GCS so the operator sees rejection reasons.
+                        logger.warning('[mavlink] ошибка telemetry-колбэка: %s', exc)
+                # COMMAND_ACK — ответ на каждый отправленный нами
+                # COMMAND_LONG (SET_MODE / ARM_DISARM). Логируется на борту
+                # И форвардится в GCS, чтобы оператор видел причины отказа.
                 ack = decode_command_ack(msg)
                 if ack is not None:
                     logger.info('[mavlink] COMMAND_ACK cmd=%s result=%s',
@@ -165,9 +170,9 @@ class MavlinkController:
                         try:
                             self._on_telemetry(ack)
                         except Exception as exc:
-                            logger.warning('[mavlink] ack callback error: %s', exc)
-                # STATUSTEXT — это то что QGC показывает в виде «Arming
-                # denied: ...», «Pre-arm: ...» и т.п. Лог + forward.
+                            logger.warning('[mavlink] ошибка ack-колбэка: %s', exc)
+                # STATUSTEXT — то, что QGC показывает в виде «Arming
+                # denied: ...», «Pre-arm: ...» и т.п. Лог + форвард.
                 st = decode_statustext(msg)
                 if st is not None:
                     logger.info('[mavlink] STATUSTEXT [%s] %s',
@@ -176,33 +181,33 @@ class MavlinkController:
                         try:
                             self._on_telemetry(st)
                         except Exception as exc:
-                            logger.warning('[mavlink] statustext callback error: %s', exc)
+                            logger.warning('[mavlink] ошибка statustext-колбэка: %s', exc)
                 if not should_throttle_msg(msg_id, self._counters):
                     continue
                 if self._on_packet:
                     try:
                         self._on_packet(bytes(raw))
                     except Exception as exc:
-                        logger.warning('[mavlink] packet callback error: %s', exc)
+                        logger.warning('[mavlink] ошибка packet-колбэка: %s', exc)
         except asyncio.CancelledError:
             return
         finally:
-            logger.info('[mavlink] read loop stopped')
+            logger.info('[mavlink] цикл чтения остановлен')
 
     def _recv_one(self) -> tuple[object | None, bool]:
-        """Return (msg, errored). msg may be None even on success (timeout)."""
+        """Возвращает (msg, errored); msg может быть None и при успехе (таймаут)."""
         try:
             return self._conn.recv_match(blocking=True, timeout=0.1), False
         except Exception as exc:
-            logger.debug('[mavlink] recv_match error: %s', exc)
+            logger.debug('[mavlink] ошибка recv_match: %s', exc)
             return None, True
 
 
 class CrsfController:
     kind = 'crsf'
-    # Betaflight / INAV decide that the RC link is alive based on
-    # LINK_STATISTICS (frame 0x14) — без него они срываются в RXLOSS
-    # даже при идущем RC_CHANNELS (0x16). 0.5 c было мало (BF подменял
+    # Betaflight / INAV считают RC-линк живым по LINK_STATISTICS
+    # (кадр 0x14) — без него они срываются в RXLOSS даже при идущем
+    # RC_CHANNELS (0x16). 0.5 c было мало (BF подменял
     # каналы failsafe-значениями между LINK_STATS-фреймами); 0.1 c ближе
     # к реальной Crossfire-каденции (~10 Hz).
     LINK_STATS_INTERVAL_SECONDS = 0.1
@@ -241,10 +246,12 @@ class CrsfController:
         self._on_packet = cb
 
     def set_telemetry_callback(self, cb: Callable[[dict], None] | None) -> None:
-        """Receives every successfully-decoded CRSF telemetry frame as a
-        dict (see CRSF.decode_telemetry for the shape — battery / gps /
-        attitude / flight_mode / device_info). The coordinator wires this
-        to push battery state to the GCS via the config data-channel."""
+        """Получает каждый успешно декодированный CRSF-кадр телеметрии словарём.
+
+        Форму словаря см. в CRSF.decode_telemetry — battery / gps /
+        attitude / flight_mode / device_info. Координатор подключает это,
+        чтобы пушить состояние батареи в GCS по config data-каналу.
+        """
         self._on_telemetry = cb
 
     async def start(self) -> None:
@@ -257,7 +264,7 @@ class CrsfController:
         self._link_stats_task = asyncio.create_task(self._link_stats_loop())
         self._rc_pump_task = asyncio.create_task(self._rc_pump_loop())
         self._write_count = 0
-        logger.info('[crsf] started on %s', self._port)
+        logger.info('[crsf] запущен на %s', self._port)
 
     async def close(self) -> None:
         if self._closed:
@@ -269,7 +276,9 @@ class CrsfController:
             task.cancel()
             try:
                 await task
-            except (asyncio.CancelledError, Exception):
+            except asyncio.CancelledError:
+                pass
+            except Exception:
                 pass
         self._read_task = None
         self._link_stats_task = None
@@ -279,22 +288,24 @@ class CrsfController:
                 self._writer.close()
                 await self._writer.wait_closed()
             except Exception as exc:
-                logger.debug('[crsf] close error: %s', exc)
+                logger.debug('[crsf] ошибка закрытия: %s', exc)
             self._writer = None
         self._reader = None
-        logger.info('[crsf] closed')
+        logger.info('[crsf] закрыт')
 
     async def send(self, data: bytes) -> None:
-        """RC-фреймы НЕ пишем в UART напрямую — кладём в кэш, _rc_pump_loop
+        """RC-кадры НЕ пишем в UART напрямую — кладём в кэш, а _rc_pump_loop
         переотправляет их в UART строго каждые RC_PUMP_INTERVAL_SECONDS.
+
         Это развязывает WebRTC-джиттер (пакеты от Desktop приходят пачками)
         от cadence'а UART, которую ожидает Betaflight. Все остальные
-        фреймы (на будущее — config/telemetry от GCS) идут напрямую."""
+        кадры (на будущее — config/telemetry от GCS) идут напрямую.
+        """
         if self._closed or self._writer is None:
             if self._closed:
-                logger.debug('[crsf] send dropped (controller closed)')
+                logger.debug('[crsf] отправка отброшена (контроллер закрыт)')
             elif self._writer is None:
-                logger.warning('[crsf] send dropped (writer not initialised)')
+                logger.warning('[crsf] отправка отброшена (writer не инициализирован)')
             return
         if (len(data) >= 3
                 and data[0] in (0xC8, 0xEE, 0xEC, 0x00)
@@ -304,36 +315,39 @@ class CrsfController:
             cnt = self._rc_recv_count + 1
             self._rc_recv_count = cnt
             if cnt == 1 or cnt % 100 == 0:
-                # На Desktop tick 100 Hz это лог раз в секунду.
-                logger.info('[crsf] RC cache #%d len=%d head=%s',
+                # При tick'е Desktop 100 Hz это лог раз в секунду.
+                logger.info('[crsf] RC-кэш #%d len=%d head=%s',
                             cnt, len(data), data[:6].hex())
             return
         try:
             self._writer.write(data)
             await self._writer.drain()
         except Exception as exc:
-            logger.warning('[crsf] write error: %s', exc)
+            logger.warning('[crsf] ошибка записи: %s', exc)
             return
         cnt = self._write_count + 1
         self._write_count = cnt
         if cnt == 1 or cnt % 50 == 0:
-            logger.info('[crsf] →UART direct #%d len=%d head=%s',
+            logger.info('[crsf] →UART напрямую #%d len=%d head=%s',
                         cnt, len(data), data[:6].hex())
 
     async def _rc_pump_loop(self) -> None:
-        """200 Hz пуш кэшированного RC-фрейма в UART. Если фрейм устарел
-        (> RC_FRAME_TIMEOUT_SECONDS), бросаем переотправку — пусть BF
-        сам триггерит RXLOSS-failsafe, а не остаётся на залипших стиках."""
-        logger.info('[crsf] rc pump started @ %d Hz', int(1 / self.RC_PUMP_INTERVAL_SECONDS))
+        """200 Hz пуш кэшированного RC-кадра в UART.
+
+        Если кадр устарел (> RC_FRAME_TIMEOUT_SECONDS), бросаем
+        переотправку — пусть BF сам триггерит RXLOSS-failsafe, а не
+        остаётся на залипших стиках.
+        """
+        logger.info('[crsf] rc pump запущен @ %d Hz', int(1 / self.RC_PUMP_INTERVAL_SECONDS))
         loop = asyncio.get_event_loop()
         try:
             while not self._closed:
                 if self._writer is not None and self._latest_rc_frame is not None:
                     age = loop.time() - self._last_rc_recv
                     if age >= self.RC_FRAME_TIMEOUT_SECONDS:
-                        # Фрейм протух — выкидываем кэш, repeater молчит до
-                        # прихода нового свежего RC-фрейма.
-                        logger.warning('[crsf] rc pump: frame stale (%.2fs), pausing', age)
+                        # Кадр протух — выкидываем кэш, repeater молчит до
+                        # прихода нового свежего RC-кадра.
+                        logger.warning('[crsf] rc pump: кадр устарел (%.2fs), пауза', age)
                         self._latest_rc_frame = None
                     else:
                         try:
@@ -344,23 +358,25 @@ class CrsfController:
                             cnt = self._rc_pump_count + 1
                             self._rc_pump_count = cnt
                             if cnt == 1 or cnt % 1000 == 0:
-                                # 1 раз в 5 секунд — подтверждаем что pump жив.
+                                # 1 раз в 5 секунд — подтверждаем, что pump жив.
                                 logger.info('[crsf] rc pump #%d', cnt)
                         except Exception as exc:
-                            logger.debug('[crsf] rc pump write error: %s', exc)
+                            logger.debug('[crsf] ошибка записи rc pump: %s', exc)
                 await asyncio.sleep(self.RC_PUMP_INTERVAL_SECONDS)
         except asyncio.CancelledError:
             return
         finally:
-            logger.info('[crsf] rc pump stopped')
+            logger.info('[crsf] rc pump остановлен')
 
     async def _link_stats_loop(self) -> None:
-        """Inject a LINK_STATISTICS frame at LINK_STATS_INTERVAL_SECONDS so
-        Betaflight/INAV believe the RC link has signal — without it they
-        raise RXLOSS regardless of RC_CHANNELS arriving. The frame is a
-        constant «good link» heartbeat; real link quality from the
-        peer-to-peer WebRTC channel is reflected separately in the UI."""
-        logger.info('[crsf] link_stats loop started')
+        """Подмешивает кадр LINK_STATISTICS каждые LINK_STATS_INTERVAL_SECONDS.
+
+        Так Betaflight/INAV считают, что у RC-линка есть сигнал — без этого
+        они поднимают RXLOSS независимо от приходящего RC_CHANNELS. Кадр —
+        постоянный heartbeat «хороший линк»; реальное качество линка из
+        peer-to-peer WebRTC-канала отражается в UI отдельно.
+        """
+        logger.info('[crsf] цикл link_stats запущен')
         count = 0
         try:
             while not self._closed:
@@ -375,15 +391,15 @@ class CrsfController:
                             logger.info('[crsf] →UART LINK_STATS #%d len=%d head=%s',
                                         count, len(frame), frame[:6].hex())
                     except Exception as exc:
-                        logger.warning('[crsf] link_stats write error: %s', exc)
+                        logger.warning('[crsf] ошибка записи link_stats: %s', exc)
                 await asyncio.sleep(self.LINK_STATS_INTERVAL_SECONDS)
         except asyncio.CancelledError:
             return
         finally:
-            logger.info('[crsf] link_stats loop stopped')
+            logger.info('[crsf] цикл link_stats остановлен')
 
     async def _read_loop(self) -> None:
-        logger.info('[crsf] read loop started')
+        logger.info('[crsf] цикл чтения запущен')
         buf = bytearray()
         assert self._reader is not None
         try:
@@ -401,14 +417,14 @@ class CrsfController:
                         try:
                             self._on_telemetry(decoded)
                         except Exception as exc:
-                            logger.warning('[crsf] telemetry callback error: %s', exc)
+                            logger.warning('[crsf] ошибка telemetry-колбэка: %s', exc)
                     frame = CRSF._frame(ftype, payload)
                     if self._on_packet:
                         try:
                             self._on_packet(frame)
                         except Exception as exc:
-                            logger.warning('[crsf] packet callback error: %s', exc)
+                            logger.warning('[crsf] ошибка packet-колбэка: %s', exc)
         except asyncio.CancelledError:
             return
         finally:
-            logger.info('[crsf] read loop stopped')
+            logger.info('[crsf] цикл чтения остановлен')

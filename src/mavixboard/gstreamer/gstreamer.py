@@ -1,37 +1,41 @@
+"""Обёртка над GStreamer-пайплайном WebRTC: запуск, остановка, шина сообщений."""
+
 from __future__ import annotations
-from typing import Callable
+
+from collections.abc import Callable
 
 import gi
+
 gi.require_version('Gst', '1.0')
 gi.require_version('GstVideo', '1.0')
-from gi.repository import Gst, GLib, GstVideo
+from gi.repository import GLib, Gst, GstVideo
 
-from mavixboard.gstreamer.pipeline import PipelineBuilder
-from mavixboard.gstreamer.camera import Camera
 from mavixboard.core.logger import logger
+from mavixboard.gstreamer.camera import Camera
+from mavixboard.gstreamer.pipeline import PipelineBuilder
 
 
 class GStreamerPipe:
-    def __init__(self, cameras: list['Camera']) -> None:
-        self.cameras: list['Camera'] = cameras
+    def __init__(self, cameras: list[Camera]) -> None:
+        self.cameras: list[Camera] = cameras
         self.pipeline: Gst.Pipeline = Gst.parse_launch(
             pipeline_description=PipelineBuilder.build_pipeline_description(cameras)
         )
         self.webrtc_elem: Gst.Element | None = self.pipeline.get_by_name('webrtc')
         self.on_playing: Callable[[], bool] | None = None
         self.on_error: Callable[[], None] | None = None
-        self.bus_: Gst.Bus = self.pipeline.get_bus()
-        self.bus_.add_watch(GLib.PRIORITY_DEFAULT, self.on_bus_message, self)
-        self.stopped_: bool = False
+        self._bus: Gst.Bus = self.pipeline.get_bus()
+        self._bus.add_watch(GLib.PRIORITY_DEFAULT, self.on_bus_message, self)
+        self._stopped: bool = False
 
     def start(self, timeout_seconds: float = 3.0) -> bool:
-        """Bring the pipeline to PLAYING and block until the state-change
-        actually completes (or fails). Returns True on success.
+        """Переводит пайплайн в PLAYING и блокирует до завершения смены состояния.
 
-        The caller MUST check the return value: if the pipeline fails to
-        reach PLAYING (e.g. v4l2 device unplugged between scan and start),
-        creating WebRTC data channels on the half-destroyed webrtcbin
-        would trip a GStreamer assertion (`is_closed != TRUE`).
+        Возвращает True при успехе. Вызывающий ОБЯЗАН проверять результат:
+        если пайплайн не доходит до PLAYING (например, v4l2-устройство
+        отключили между сканом и стартом), создание WebRTC data-каналов на
+        полуразрушенном webrtcbin приведёт к ассерту GStreamer
+        (`is_closed != TRUE`).
         """
         if self.webrtc_elem:
             self.webrtc_elem.set_property('latency', 0)
@@ -40,20 +44,22 @@ class GStreamerPipe:
         return ret == Gst.StateChangeReturn.SUCCESS and state == Gst.State.PLAYING
 
     def stop(self) -> None:
-        if self.stopped_:
+        if self._stopped:
             return
-        self.stopped_ = True
-        self.bus_.remove_watch()  # drop ref the watch holds on the pipeline so v4l2src can finalize
+        self._stopped = True
+        # Снимаем watch, чтобы он отпустил ссылку на пайплайн и v4l2src смог финализироваться.
+        self._bus.remove_watch()
         self.pipeline.set_state(Gst.State.NULL)
-        self.pipeline.get_state(Gst.SECOND * 2)  # block until v4l2 fd is actually released
+        # Блокируемся, пока v4l2 fd реально не освободится.
+        self.pipeline.get_state(Gst.SECOND * 2)
 
     def update_bitrate(self, cam_idx: int, bitrate_kbs: int) -> bool:
         enc = self.pipeline.get_by_name(f'enc{cam_idx}')
         if enc is None:
-            logger.warning(f'[transmit] enc{cam_idx} not found in pipeline')
+            logger.warning('[transmit] enc%d не найден в пайплайне', cam_idx)
             return False
         if enc.get_factory().get_name() != 'x264enc':
-            logger.warning(f'[transmit] enc{cam_idx} is not x264enc, skipping dynamic bitrate update')
+            logger.warning('[transmit] enc%d не x264enc, пропускаю динамическое обновление bitrate', cam_idx)
             return False
         enc.set_property('bitrate', bitrate_kbs)
         event = GstVideo.video_event_new_upstream_force_key_unit(
@@ -62,24 +68,25 @@ class GStreamerPipe:
         rtp = self.pipeline.get_by_name(f'rtp{cam_idx}')
         if rtp:
             rtp.send_event(event)
-        logger.info(f'[transmit] Bitrate updated: cam{cam_idx} -> {bitrate_kbs} kbps')
+        logger.info('[transmit] bitrate обновлён: cam%d -> %d kbps', cam_idx, bitrate_kbs)
         return True
 
     @staticmethod
-    def on_bus_message(bus, message: Gst.Structure, gst_pipe: 'GStreamerPipe') -> bool:
+    def on_bus_message(bus: Gst.Bus, message: Gst.Message, gst_pipe: GStreamerPipe) -> bool:
         match message.type:
             case Gst.MessageType.ERROR:
                 err, debug = message.parse_error()
-                logger.error(f'[transmit] GStreamer ERROR: {err} | {debug}')
+                logger.error('[transmit] GStreamer ERROR: %s | %s', err, debug)
                 if gst_pipe.on_error:
                     GLib.idle_add(gst_pipe.on_error)
             case Gst.MessageType.WARNING:
                 warn, debug = message.parse_warning()
-                logger.warning(f'[transmit] GStreamer WARNING: {warn} | {debug}')
+                logger.warning('[transmit] GStreamer WARNING: %s | %s', warn, debug)
             case Gst.MessageType.STATE_CHANGED:
                 if message.src == gst_pipe.pipeline:
                     old, new, _ = message.parse_state_changed()
-                    logger.info(f'[transmit] Pipeline state: {old.value_nick} -> {new.value_nick}')
+                    logger.info('[transmit] состояние пайплайна: %s -> %s',
+                                old.value_nick, new.value_nick)
                     if new == Gst.State.PLAYING and gst_pipe.on_playing:
                         GLib.idle_add(gst_pipe.on_playing)
         return True

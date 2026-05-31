@@ -156,7 +156,7 @@ class ConfigChannel(_BaseChannel):
 
 
 class DataChannelHub:
-    """Create and own all three data channels for a single peer session."""
+    """Создаёт и владеет всеми тремя data-каналами одной сессии пира."""
 
     def __init__(self, webrtc_elem) -> None:
         self.packet = PacketChannel(self._create(webrtc_elem, 'packet-channel', PacketChannel.INIT_SPEC))
@@ -168,7 +168,7 @@ class DataChannelHub:
         init = _channel_init(init_spec)
         channel = webrtc_elem.emit('create-data-channel', name, init)
         if channel is None:
-            raise RuntimeError(f'failed to create data channel: {name}')
+            raise RuntimeError(f'не удалось создать data-канал: {name}')
         return channel
 
     def close(self) -> None:

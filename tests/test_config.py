@@ -69,7 +69,7 @@ def test_local_env_overrides_preset(tmp_path, monkeypatch):
 
 
 # ---------- DRONE_ID / DRONE_TOKEN from preset.env ----------
-# The server bakes these into preset.env at .deb build time. Settings
+# The server bakes these into preset.env at install/build time. Settings
 # must read them so the board can use DRONE_TOKEN for WS auth instead
 # of a locally-generated random token (which the server doesn't know).
 
@@ -112,7 +112,7 @@ def test_drone_token_loaded_from_preset_env_file(tmp_path, monkeypatch):
 
 
 # ---------- Log / data path resolution ----------
-# Source-tree runs use _PROJECT_ROOT/_log and _data; .deb installs set
+# Source-tree runs use _PROJECT_ROOT/_log and _data; production installs set
 # MAVIXBOARD_LOG_DIR / MAVIXBOARD_DATA_DIR via systemd to writable
 # locations under /var. Without env var AND without the dev tree, fall
 # back to XDG ~/.local paths.
@@ -141,7 +141,7 @@ def test_log_dir_uses_project_root_in_source_tree(monkeypatch):
 
 
 def test_log_dir_falls_back_to_xdg_when_not_in_source_tree(monkeypatch):
-    """When run from an installed package (.deb path) — no pyproject.toml
+    """When run from an installed package — no pyproject.toml
     on the parent chain — log directory must be a writable user-local path,
     not the read-only system install dir."""
     from mavixboard.core import config

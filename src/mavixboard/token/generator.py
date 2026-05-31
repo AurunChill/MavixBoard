@@ -1,21 +1,17 @@
+from __future__ import annotations
+
 from secrets import token_hex
 
+
 def generate(length: int) -> str:
-    """Generate a cryptographically secure hex token
+    """Генерирует криптографически стойкий hex-токен.
 
-    Args:
-        length: Desired token length in characters. Must be an int.
-
-    Returns:
-        Hex string of exactly `length` chars, or '' if length <= 0.
-
-    Raises:
-        TypeError: If `length` is not an int.
+    Возвращает hex-строку ровно из `length` символов, либо '' при length <= 0.
+    Бросает TypeError, если `length` не int.
     """
     if not isinstance(length, int):
-        raise TypeError(f"length must be int, got {type(length).__name__}")
+        raise TypeError(f'length должен быть int, получен {type(length).__name__}')
     if length <= 0:
         return ''
     token = token_hex((length // 2) + 1)
     return token[:-2] if length % 2 == 0 else token[:-1]
-    

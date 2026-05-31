@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 from collections.abc import Awaitable, Callable
 
 import gi
 
 gi.require_version('Gst', '1.0')
 from gi.repository import Gst
-
-import dataclasses
 
 from mavixboard.core.logger import logger
 from mavixboard.fc.service import FCService
@@ -45,13 +44,13 @@ class WebRTCManager:
 
     def start_session(self, gcs_id: str, cameras: list | None = None) -> None:
         if self._peer is not None:
-            logger.warning('[manager] session already active (gcs=%s), ending before new one', self._peer.gcs_id)
+            logger.warning('[manager] сессия уже активна (gcs=%s), завершаем перед новой', self._peer.gcs_id)
             self.end_session()
-        logger.info('[manager] starting session with gcs=%s', gcs_id)
+        logger.info('[manager] старт сессии с gcs=%s', gcs_id)
         self._peer = PeerSession(gcs_id, self._webrtc, self._loop)
         self._channels = DataChannelHub(self._webrtc)
         self._cameras = list(cameras) if cameras else []
-        self._fc_fwd_count = 0  # reset per-session counter for forward log
+        self._fc_fwd_count = 0  # сброс посессионного счётчика для лога проброса
         self._wire_channels()
         self._ice_pump_task = self._loop.create_task(self._pump_ice())
         self._offer_pump_task = self._loop.create_task(self._pump_offer())
@@ -59,7 +58,7 @@ class WebRTCManager:
     def end_session(self) -> None:
         if self._peer is None:
             return
-        logger.info('[manager] ending session with gcs=%s', self._peer.gcs_id)
+        logger.info('[manager] завершение сессии с gcs=%s', self._peer.gcs_id)
         for task in (self._ice_pump_task, self._offer_pump_task):
             if task and not task.done():
                 task.cancel()
@@ -77,11 +76,11 @@ class WebRTCManager:
     def _wire_channels(self) -> None:
         if self._channels is None:
             return
-        # FC ↔ GCS bidirectional pipe through packet data-channel (if FC is up)
+        # Двунаправленный канал FC <-> GCS через packet data-канал (если FC поднят)
         if self._fc_service is not None:
             self._fc_service.set_packet_callback(self._channels.packet.send_bytes)
             self._channels.packet.on_packet = self._forward_to_fc
-        # Send FC info + cameras list as soon as config channel opens
+        # Отправляем info по FC + список камер, как только откроется config-канал
         self._channels.config.on_open = self._send_config_open
 
     def _unwire_channels(self) -> None:
@@ -95,20 +94,22 @@ class WebRTCManager:
     def _forward_to_fc(self, data: bytes) -> None:
         if self._fc_service is None:
             return
-        # Throttled debug log: first packet of each session + every ~50th
-        # (so ~1 line per second at the 50 Hz joystick stream). Lets us
-        # confirm packets actually arrive from the GCS without burying
-        # the log under 50 lines/sec of identical entries.
+        # Троттлинг debug-лога: первый пакет каждой сессии + каждый ~50-й (то
+        # есть ~1 строка в секунду при потоке джойстика 50 Гц). Позволяет
+        # подтвердить, что пакеты реально приходят от GCS, не заваливая лог
+        # 50 одинаковыми строками в секунду.
         cnt = getattr(self, '_fc_fwd_count', 0) + 1
         self._fc_fwd_count = cnt
         if cnt == 1 or cnt % 50 == 0:
-            logger.info('[manager] →FC packet #%d len=%d head=%s',
+            logger.info('[manager] ->FC пакет #%d len=%d head=%s',
                         cnt, len(data), data[:6].hex())
         asyncio.run_coroutine_threadsafe(self._fc_service.send(data), self._loop)
 
     def _send_config_open(self) -> None:
-        """Called when the config data-channel transitions to OPEN. Pushes
-        the initial state the GCS needs: FC info + camera list."""
+        """Вызывается при переходе config data-канала в OPEN.
+
+        Отправляет начальное состояние, нужное GCS: info по FC + список камер.
+        """
         self._send_fc_info()
         self._send_cameras()
 
@@ -125,9 +126,11 @@ class WebRTCManager:
         })
 
     def notify_fc_changed(self) -> None:
-        """Public hook so the coordinator can push a fresh `fc` config
-        message after a hot-plug/unplug — _send_config_open only fires
-        once when the data-channel opens."""
+        """Публичный хук, чтобы координатор мог отправить свежее `fc`-сообщение
+        в config после горячего подключения/отключения.
+
+        _send_config_open срабатывает лишь раз при открытии data-канала.
+        """
         self._send_fc_info()
 
     def _send_cameras(self) -> None:
@@ -136,7 +139,7 @@ class WebRTCManager:
         try:
             payload = [dataclasses.asdict(cam) for cam in self._cameras]
         except TypeError:
-            # In case a non-dataclass camera object sneaks in
+            # На случай, если просочится объект камеры, не являющийся dataclass
             payload = [getattr(cam, '__dict__', {}) for cam in self._cameras]
         self._channels.config.send_json({'type': 'cameras', 'cameras': payload})
 
@@ -154,10 +157,10 @@ class WebRTCManager:
 
     def _guard(self, gcs_id: str) -> bool:
         if self._peer is None:
-            logger.warning('[manager] message for gcs=%s but no active session', gcs_id)
+            logger.warning('[manager] сообщение для gcs=%s, но активной сессии нет', gcs_id)
             return False
         if self._peer.gcs_id != gcs_id:
-            logger.warning('[manager] message for gcs=%s but active is gcs=%s', gcs_id, self._peer.gcs_id)
+            logger.warning('[manager] сообщение для gcs=%s, но активна gcs=%s', gcs_id, self._peer.gcs_id)
             return False
         return True
 

@@ -1,22 +1,20 @@
+from __future__ import annotations
+
 from mavixboard.core.config import settings
 
 TOKEN_PATH = settings.token_path
 
 
 def get() -> str:
-    """Read the stored token from disk. 
-    
-    Returns token if exists
-    """
-    return TOKEN_PATH.read_text() if TOKEN_PATH.exists() else ""
+    """Читает сохранённый токен с диска, возвращая его при наличии, иначе ''."""
+    return TOKEN_PATH.read_text() if TOKEN_PATH.exists() else ''
 
 
 def write(token: str) -> None:
-    """Write the token to disk, creating the directory if needed.
+    """Записывает токен на диск, создавая директорию при необходимости.
 
-    Raises:
-        TypeError: If token is not a str.
+    Бросает TypeError, если token не str.
     """
     if not isinstance(token, str):
-        raise TypeError(f"token must be str, got {type(token).__name__}")
+        raise TypeError(f'token должен быть str, получен {type(token).__name__}')
     TOKEN_PATH.write_text(token)

@@ -47,12 +47,12 @@ class SignalClient:
 
     async def send(self, payload: dict) -> None:
         if self._conn is None:
-            raise RuntimeError('signal client not connected')
+            raise RuntimeError('сигнальный клиент не подключён')
         await self._conn.send(json.dumps(payload))
 
     async def listen(self, on_message: Callable[[dict], Awaitable[None]]) -> None:
         if self._conn is None:
-            raise RuntimeError('signal client not connected')
+            raise RuntimeError('сигнальный клиент не подключён')
         async for raw in self._conn:
             try:
                 msg = json.loads(raw)

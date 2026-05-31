@@ -1,3 +1,5 @@
+"""Опрос v4l2 для обнаружения горячего подключения/отключения камер."""
+
 from __future__ import annotations
 
 import asyncio
@@ -10,20 +12,21 @@ ChangedCallback = Callable[[set[int]], None]
 
 
 def _enumerate_capture_indices(scanner: V4l2Scanner) -> set[int]:
-    """List /dev/videoN indices that look like real cameras.
+    """Возвращает индексы /dev/videoN, похожие на настоящие камеры.
 
-    Used by the polling loop to detect hot-plug. Must NOT open the device
-    or trigger calibration — that races with the active GStreamer pipeline
-    and falsely reports the camera as gone.
+    Используется циклом опроса для обнаружения hot-plug. НЕ должна
+    открывать устройство или запускать калибровку — это гонка с активным
+    GStreamer-пайплайном, из-за которой камера ложно считается пропавшей.
 
-    `filter_capture_devices` alone is too permissive on Raspberry Pi: ISP,
-    codec, unicam nodes (typically /dev/video10..23) all advertise the
-    Video Capture cap but expose no usable raw formats. They'd appear and
-    disappear in the count differently from what CameraRegistry._scan
-    actually keeps (it drops anything with empty parse_camera_params),
-    making the watcher think the set changed every poll and triggering a
-    tear-down loop. So we mirror _scan's filter: only count devices that
-    have at least one width × height × fps × format combination.
+    Один `filter_capture_devices` слишком либерален на Raspberry Pi: узлы
+    ISP, кодека, unicam (обычно /dev/video10..23) все объявляют Video
+    Capture, но не дают пригодных raw-форматов. Они появлялись бы и
+    исчезали в счётчике иначе, чем то, что реально оставляет
+    CameraRegistry._scan (он отбрасывает всё с пустым
+    parse_camera_params), и watcher решал бы, что набор меняется на каждом
+    опросе, запуская цикл пересоздания. Поэтому повторяем фильтр _scan:
+    считаем только устройства хотя бы с одной комбинацией
+    width × height × fps × format.
     """
     if not scanner.is_available():
         return set()

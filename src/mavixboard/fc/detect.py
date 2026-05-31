@@ -1,3 +1,5 @@
+"""Автоопределение подключённого полётника по UART: MAVLINK или CRSF."""
+
 from __future__ import annotations
 
 import asyncio
@@ -10,7 +12,11 @@ from pymavlink import mavutil
 
 from mavixboard.core.config import settings
 from mavixboard.core.logger import logger
-from mavixboard.fc.controllers import CrsfController, FlightController, MavlinkController
+from mavixboard.fc.controllers import (
+    CrsfController,
+    FlightController,
+    MavlinkController,
+)
 from mavixboard.fc.crsf import BAUDRATE as CRSF_BAUDRATE
 from mavixboard.fc.crsf import CRSF
 from mavixboard.fc.mavlink import MAV_AUTOPILOT
