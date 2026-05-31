@@ -1,10 +1,8 @@
-"""Tests for Coordinator's config-channel handling: reboot, bitrate, watcher wiring."""
+"""Tests for Coordinator's config-channel handling: bitrate, watcher wiring."""
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
-
-import pytest
+from unittest.mock import AsyncMock, MagicMock
 
 from mavixboard.coordinator import SessionCoordinator
 
@@ -57,65 +55,7 @@ def _make_pipeline_mock(cameras: list[MagicMock] | None = None) -> MagicMock:
     return pipeline
 
 
-# ============================================================================
-# Reboot
-# ============================================================================
-
-async def test_config_reboot_calls_execv():
-    sc = _make_signal_client()
-    pipeline = _make_pipeline_mock()
-    coord = SessionCoordinator(sc, MagicMock(return_value=pipeline))
-    coord._loop = asyncio.get_running_loop()
-
-    await coord._handle_connect('gcs-1')
-
-    with patch('mavixboard.coordinator.os.execv') as mock_execv:
-        coord._on_config_message({'type': 'reboot'})
-        # task is scheduled — wait
-        await asyncio.sleep(0.05)
-        mock_execv.assert_called_once()
-    coord._teardown()
-
-
-async def test_config_reboot_tears_down_session():
-    sc = _make_signal_client()
-    fc = MagicMock()
-    fc.stop = AsyncMock()
-    pipeline = _make_pipeline_mock()
-    coord = SessionCoordinator(sc, MagicMock(return_value=pipeline), fc_service=fc)
-    coord._loop = asyncio.get_running_loop()
-
-    await coord._handle_connect('gcs-1')
-
-    with patch('mavixboard.coordinator.os.execv'):
-        coord._on_config_message({'type': 'reboot'})
-        await asyncio.sleep(0.05)
-
-    pipeline.stop.assert_called_once()
-    fc.stop.assert_awaited()
-    sc.disconnect.assert_awaited()
-
-
-async def test_config_reboot_continues_even_if_cleanup_errors():
-    sc = _make_signal_client()
-    fc = MagicMock()
-    fc.stop = AsyncMock(side_effect=RuntimeError('fc stop boom'))
-    pipeline = _make_pipeline_mock()
-    pipeline.stop = MagicMock(side_effect=RuntimeError('pipe boom'))
-    coord = SessionCoordinator(sc, MagicMock(return_value=pipeline), fc_service=fc)
-    coord._loop = asyncio.get_running_loop()
-    await coord._handle_connect('gcs-1')
-
-    with patch('mavixboard.coordinator.os.execv') as mock_execv:
-        coord._on_config_message({'type': 'reboot'})
-        await asyncio.sleep(0.05)
-        mock_execv.assert_called_once()
-
-
-# ============================================================================
-# Bitrate
-# ============================================================================
-
+#### Bitrate ###########################################################################
 async def test_config_bitrate_routes_to_pipeline():
     sc = _make_signal_client()
     cam0 = _make_camera(0, bitrate=1000)
@@ -209,10 +149,7 @@ async def test_config_bitrate_swallows_save_errors():
     coord._teardown()
 
 
-# ============================================================================
-# Config message dispatch
-# ============================================================================
-
+#### Config message dispatch ###########################################################
 async def test_config_non_dict_payload_ignored():
     sc = _make_signal_client()
     coord = SessionCoordinator(sc, MagicMock())
@@ -228,10 +165,7 @@ async def test_config_unknown_type_logged():
     coord._on_config_message({'type': 'unknown_thing'})
 
 
-# ============================================================================
-# Watcher wiring
-# ============================================================================
-
+#### Watcher wiring ####################################################################
 async def test_watcher_started_on_connect():
     sc = _make_signal_client()
     pipeline = _make_pipeline_mock(cameras=[_make_camera(0), _make_camera(1)])
@@ -257,25 +191,6 @@ async def test_watcher_stopped_on_teardown():
     await coord._handle_connect('gcs-1')
     coord._teardown()
     watcher.stop.assert_called()
-
-
-async def test_watcher_callback_sends_cameras_changed_via_config():
-    sc = _make_signal_client()
-    pipeline = _make_pipeline_mock(cameras=[_make_camera(0), _make_camera(1)])
-    watcher = MagicMock()
-    coord = SessionCoordinator(sc, MagicMock(return_value=pipeline), watcher=watcher)
-    coord._loop = asyncio.get_running_loop()
-    await coord._handle_connect('gcs-1')
-
-    config_ch = coord._manager.channels.config
-    config_ch.send_json = MagicMock()
-
-    coord._on_cameras_changed({0, 1, 2})
-
-    config_ch.send_json.assert_called_once_with({
-        'type': 'cameras_changed',
-        'device_indices': [0, 1, 2],
-    })
 
 
 async def test_watcher_callback_tears_down_session():
@@ -309,10 +224,7 @@ async def test_watcher_callback_sends_disconnect_session_to_server():
     sc.send.assert_any_await({'type': 'disconnect_session'})
 
 
-# ============================================================================
-# Pipeline error
-# ============================================================================
-
+#### Pipeline error ####################################################################
 async def test_pipeline_error_hook_is_installed_on_connect():
     sc = _make_signal_client()
     pipeline = _make_pipeline_mock()
@@ -383,10 +295,7 @@ async def test_watcher_callback_no_session_is_noop():
     coord._on_cameras_changed({0, 1})  # should not raise
 
 
-# ============================================================================
-# Config channel wired through manager
-# ============================================================================
-
+#### Config channel wired through manager ##############################################
 async def test_config_channel_routes_to_coordinator_handler():
     sc = _make_signal_client()
     pipeline = _make_pipeline_mock()

@@ -18,11 +18,10 @@ from mavixboard.fc.service import FCService
 from mavixboard.gstreamer.camera import CameraManager
 from mavixboard.gstreamer.gstreamer import GStreamerPipe
 from mavixboard.gstreamer.watcher import CameraWatcher
-from mavixboard.server import api
 from mavixboard.server.signal_client import SignalClient
-from mavixboard.token import generator, storage
 
 
+#### Подготовка окружения ##############################################################
 def _init_dirs() -> None:
     settings.log_path.parent.mkdir(parents=True, exist_ok=True)
     settings.token_path.parent.mkdir(parents=True, exist_ok=True)
@@ -44,52 +43,24 @@ def _build_pipeline() -> GStreamerPipe | None:
     return GStreamerPipe(cameras)
 
 
-async def _ensure_registered(api_session: api.ApiSession, token: str) -> bool:
-    while True:
-        if not await api_session.connection_check():
-            logger.error('[app] сигнальный сервер недоступен')
-            await asyncio.sleep(5)
-            continue
-        if await api_session.send_register(drone_token=token):
-            logger.info('[app] дрон зарегистрирован')
-            return True
-        logger.error('[app] ошибка регистрации, повтор')
-        await asyncio.sleep(5)
+def _resolve_drone_token() -> str:
+    """Возвращает DRONE_TOKEN для WS-авторизации.
 
-
-async def _resolve_drone_token() -> str:
-    """Определяет, какой токен использовать для WS-авторизации.
-
-    Production-путь: preset.env заполняет
-    settings.drone_token (и DRONE_ID) — сервер уже создал строку Drone,
-    поэтому просто используем зашитый токен и пропускаем регистрацию при
-    старте.
-
-    Dev-путь (нет preset.env): генерируем токен локально, сохраняем его и
-    регистрируемся при каждом запуске (drone_service.register идемпотентна
-    для одного drone_id, поэтому это безопасно между перезапусками).
+    Токен выпускает сервер при регистрации дрона (через пользовательский
+    флоу) и прокидывает в board: в production — через preset.env, в dev —
+    через .env. Если он не задан, стартовать бессмысленно — падаем с
+    понятной ошибкой.
     """
-    if settings.drone_token:
-        logger.info('[app] используется DRONE_TOKEN из preset.env (drone_id=%s)', settings.drone_id or '<unset>')
-        return settings.drone_token
-
-    token = storage.get()
-    if not token:
-        token = generator.generate(length=64)
-        storage.write(token)
-
-    # Только для dev: «звоним домой», чтобы строка Drone существовала. Теперь,
-    # когда авторизация на /drones/register обязательна, понадобился бы
-    # пользовательский JWT — в dev это означает отдельный скрипт
-    # `mavixboard-enroll` (вне области этого кода);
-    api_session = await api.ApiSession.create()
-    try:
-        await _ensure_registered(api_session, token)
-    finally:
-        await api_session.close()
-    return token
+    if not settings.drone_token:
+        raise RuntimeError(
+            'DRONE_TOKEN не задан: зарегистрируйте дрон и пропишите его токен '
+            'в preset.env (production) или .env (dev)'
+        )
+    logger.info('[app] используется DRONE_TOKEN (drone_id=%s)', settings.drone_id or '<unset>')
+    return settings.drone_token
 
 
+#### Точка входа #######################################################################
 async def main() -> None:
     _init_dirs()
 
@@ -99,7 +70,7 @@ async def main() -> None:
     glib = GLibMainLoopThread()
     glib.start()
 
-    token = await _resolve_drone_token()
+    token = _resolve_drone_token()
 
     fc_service = FCService()
     await fc_service.start()

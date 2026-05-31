@@ -21,6 +21,7 @@ load_dotenv(override=True)
 _BASE = Path.home() / '.config' / 'mavixboard'
 
 
+#### Разрешение путей ##################################################################
 def _find_project_root() -> Path | None:
     """Поднимается вверх от этого файла в поисках pyproject.toml dev-дерева.
 
@@ -66,6 +67,7 @@ def _resolve_data_dir() -> Path:
     return Path.home() / '.local' / 'share' / 'mavixboard'
 
 
+#### Настройки #########################################################################
 @dataclass
 class Settings:
     signal_server_ip: str = field(default_factory=lambda: os.getenv('SIGNAL_SERVER_IP', 'http://localhost'))

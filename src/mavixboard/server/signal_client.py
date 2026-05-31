@@ -14,6 +14,7 @@ if TYPE_CHECKING:
 
 
 class SignalClient:
+    #### Подключение #######################################################################
     def __init__(self, url: str, drone_token: str) -> None:
         self._url = url
         self._drone_token = drone_token
@@ -45,6 +46,7 @@ class SignalClient:
         finally:
             self._conn = None
 
+    #### Обмен сообщениями #################################################################
     async def send(self, payload: dict) -> None:
         if self._conn is None:
             raise RuntimeError('сигнальный клиент не подключён')

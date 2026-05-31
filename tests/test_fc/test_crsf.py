@@ -5,8 +5,7 @@ import pytest
 from mavixboard.fc.crsf import BAUDRATE, CH_CENTER, CH_MAX, CH_MIN, CRSF
 
 
-# ---------- crc8 ----------
-
+#### crc8 ##############################################################################
 def test_crc8_empty():
     assert CRSF.crc8(b'') == 0
 
@@ -21,8 +20,7 @@ def test_crc8_consistency_for_same_input():
     assert CRSF.crc8(b'foo') == CRSF.crc8(b'foo')
 
 
-# ---------- frame builder ----------
-
+#### frame builder #####################################################################
 def test_frame_structure_starts_with_addr_and_length():
     payload = b'\x01\x02\x03'
     frame = CRSF._frame(0x14, payload, addr=0xC8)
@@ -40,8 +38,7 @@ def test_frame_includes_valid_crc():
     assert frame[-1] == CRSF.crc8(body)
 
 
-# ---------- rc_frame ----------
-
+#### rc_frame ##########################################################################
 def test_rc_frame_has_22_byte_payload_plus_header_and_crc():
     frame = CRSF.rc_frame([CH_CENTER] * 16)
     # addr + len + ftype + 22 channel bytes + crc = 26
@@ -65,8 +62,7 @@ def test_rc_frame_clamps_out_of_range():
     assert ((bits >> 11) & 0x7FF) == 0
 
 
-# ---------- link_stats_frame ----------
-
+#### link_stats_frame ##################################################################
 def test_link_stats_frame_type_and_length():
     frame = CRSF.link_stats_frame(rssi=-75, lq=88)
     assert frame[2] == 0x14
@@ -78,8 +74,7 @@ def test_link_stats_frame_default_signals_set():
     assert frame[2] == 0x14
 
 
-# ---------- ping_frame ----------
-
+#### ping_frame ########################################################################
 def test_ping_frame_format():
     frame = CRSF.ping_frame()
     assert frame[2] == 0x28
@@ -88,8 +83,7 @@ def test_ping_frame_format():
     assert frame[4] == 0xEE
 
 
-# ---------- parse_frames ----------
-
+#### parse_frames ######################################################################
 def test_parse_frames_extracts_single_valid_frame():
     payload = b'\x01\x02\x03'
     frame = CRSF._frame(0x14, payload)
@@ -138,8 +132,7 @@ def test_parse_frames_multiple_in_one_buffer():
     assert [ftype for ftype, _ in result] == [0x14, 0x16]
 
 
-# ---------- decode_telemetry ----------
-
+#### decode_telemetry ##################################################################
 def test_decode_battery():
     # voltage=11.5 -> 115; current=2.4 -> 24; cap=12345; remaining=78
     payload = (
@@ -210,8 +203,7 @@ def test_decode_unknown_type_returns_none():
     assert CRSF.decode_telemetry(0x99, b'\x01\x02') is None
 
 
-# ---------- axis/throttle helpers ----------
-
+#### axis/throttle helpers #############################################################
 def test_axis_to_crsf_deadzone_returns_center():
     assert CRSF.axis_to_crsf(0.0) == CH_CENTER
     assert CRSF.axis_to_crsf(0.04) == CH_CENTER
@@ -249,7 +241,6 @@ def test_crsf_to_us_at_center_is_1500():
     assert CRSF.crsf_to_us(CH_MAX) > 1500
 
 
-# ---------- BAUDRATE sanity ----------
-
+#### BAUDRATE sanity ###################################################################
 def test_baudrate_is_420000():
     assert BAUDRATE == 420000

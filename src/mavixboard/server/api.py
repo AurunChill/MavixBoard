@@ -8,11 +8,13 @@ from mavixboard.core.config import settings
 from mavixboard.core.logger import logger
 
 
+#### Маршруты ##########################################################################
 class API_ROUTES(StrEnum):
     HEALTH_CHECK = '/api/v1/health'
     DRONE_REGISTER = '/api/v1/drones/register'
 
 
+#### HTTP-сессия #######################################################################
 class ApiSession:
     def __init__(self, session: aiohttp.ClientSession) -> None:
         self.session = session

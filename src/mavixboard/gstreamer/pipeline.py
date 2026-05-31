@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     from mavixboard.gstreamer.camera import Camera, CameraParams
 
 
+#### Нормализация ICE-URL ##############################################################
 def _normalize_scheme(raw: str, prefix: str) -> str:
     """Привести `prefix:host:port` к `prefix://host:port`. webrtcbin
     парсит ICE URL'ы строго через `scheme://` (см. документацию). Если
@@ -80,6 +81,7 @@ def _redact_url(url: str) -> str:
     return url
 
 
+#### Сборка пайплайнов #################################################################
 class PipelineBuilder:
     @staticmethod
     def build_pipeline_description(cameras: list[Camera]) -> str:

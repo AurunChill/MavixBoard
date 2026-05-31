@@ -10,10 +10,7 @@ from mavixboard.fc.crsf import CRSF
 from mavixboard.fc.mavlink import IMPORTANT_MSGS
 
 
-# ============================================================================
-# MavlinkController
-# ============================================================================
-
+#### MavlinkController #################################################################
 def _make_mavlink_msg(raw: bytes, src_system: int = 1, autopilot: int = 3):
     msg = MagicMock()
     msg.get_msgbuf.return_value = raw
@@ -166,10 +163,7 @@ async def test_mavlink_callback_errors_are_swallowed():
     assert ctrl.is_running is False
 
 
-# ============================================================================
-# CrsfController
-# ============================================================================
-
+#### CrsfController ####################################################################
 class _FakeReader:
     def __init__(self, chunks: list[bytes]) -> None:
         self._chunks = chunks

@@ -28,6 +28,7 @@ class GStreamerPipe:
         self._bus.add_watch(GLib.PRIORITY_DEFAULT, self.on_bus_message, self)
         self._stopped: bool = False
 
+    #### Жизненный цикл пайплайна ##########################################################
     def start(self, timeout_seconds: float = 3.0) -> bool:
         """Переводит пайплайн в PLAYING и блокирует до завершения смены состояния.
 
@@ -53,6 +54,7 @@ class GStreamerPipe:
         # Блокируемся, пока v4l2 fd реально не освободится.
         self.pipeline.get_state(Gst.SECOND * 2)
 
+    #### Управление битрейтом ##############################################################
     def update_bitrate(self, cam_idx: int, bitrate_kbs: int) -> bool:
         enc = self.pipeline.get_by_name(f'enc{cam_idx}')
         if enc is None:
@@ -71,6 +73,7 @@ class GStreamerPipe:
         logger.info('[transmit] bitrate обновлён: cam%d -> %d kbps', cam_idx, bitrate_kbs)
         return True
 
+    #### Обработка шины сообщений ##########################################################
     @staticmethod
     def on_bus_message(bus: Gst.Bus, message: Gst.Message, gst_pipe: GStreamerPipe) -> bool:
         match message.type:

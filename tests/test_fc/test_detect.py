@@ -39,8 +39,15 @@ class _FakeWriter:
         return
 
 
-# ---------- detect prefers Mavlink ----------
+@pytest.fixture(autouse=True)
+def _ports_exist(monkeypatch):
+    # detect() пропускает порты, которых нет на ФС (os.path.exists). В тестах
+    # порты фиктивные, поэтому считаем все переданные порты существующими —
+    # иначе цикл перебора портов вообще не выполняется.
+    monkeypatch.setattr('mavixboard.fc.detect.os.path.exists', lambda _p: True)
 
+
+#### detect prefers Mavlink ############################################################
 async def test_detect_returns_mavlink_when_heartbeat_received(monkeypatch):
     heartbeat = MagicMock()
     heartbeat.autopilot = 3  # ardupilot
@@ -58,8 +65,7 @@ async def test_detect_returns_mavlink_when_heartbeat_received(monkeypatch):
     assert ctrl.name == 'ardupilot'
 
 
-# ---------- detect falls through to CRSF ----------
-
+#### detect falls through to CRSF ######################################################
 async def test_detect_falls_back_to_crsf_when_no_heartbeat(monkeypatch):
     # Mavlink probe yields None (no heartbeat)
     mav_conn = MagicMock()
@@ -85,8 +91,7 @@ async def test_detect_falls_back_to_crsf_when_no_heartbeat(monkeypatch):
     assert ctrl.name == 'Pixhawk6'
 
 
-# ---------- detect returns None when nothing answers ----------
-
+#### detect returns None when nothing answers ##########################################
 async def test_detect_returns_none_when_no_fc(monkeypatch):
     mav_conn = MagicMock()
     mav_conn.wait_heartbeat.return_value = None
@@ -107,8 +112,7 @@ async def test_detect_returns_none_when_no_fc(monkeypatch):
     assert ctrl is None
 
 
-# ---------- detect handles serial errors gracefully ----------
-
+#### detect handles serial errors gracefully ###########################################
 async def test_detect_handles_serial_open_error_for_crsf(monkeypatch):
     import serial
 
@@ -148,8 +152,7 @@ async def test_detect_handles_mavlink_open_error(monkeypatch):
     assert ctrl is None
 
 
-# ---------- detect iterates over ports ----------
-
+#### detect iterates over ports ########################################################
 async def test_detect_tries_all_ports_in_order(monkeypatch):
     seen_ports: list[str] = []
 

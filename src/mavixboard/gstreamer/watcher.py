@@ -11,6 +11,7 @@ from mavixboard.gstreamer.camera import V4l2Scanner
 ChangedCallback = Callable[[set[int]], None]
 
 
+#### Перечисление устройств ############################################################
 def _enumerate_capture_indices(scanner: V4l2Scanner) -> set[int]:
     """Возвращает индексы /dev/videoN, похожие на настоящие камеры.
 
@@ -43,6 +44,7 @@ def _enumerate_capture_indices(scanner: V4l2Scanner) -> set[int]:
     return ids
 
 
+#### Наблюдатель за камерами ###########################################################
 class CameraWatcher:
     def __init__(self, interval: float = 5.0) -> None:
         self._interval = interval

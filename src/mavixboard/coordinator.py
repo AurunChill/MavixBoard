@@ -37,6 +37,7 @@ class SessionCoordinator:
         self._manager: WebRTCManager | None = None
         self._stop_event: asyncio.Event | None = None
 
+    #### Жизненный цикл ####################################################################
     async def run(self) -> None:
         self._loop = asyncio.get_running_loop()
         self._stop_event = asyncio.Event()
@@ -83,6 +84,7 @@ class SessionCoordinator:
         if self._fc_service is not None:
             self._fc_service.set_change_callback(None)
 
+    #### Колбэки FC ########################################################################
     def _on_fc_change(self, kind: str | None, name: str) -> None:
         """Срабатывает из FCService при появлении/исчезновении FC-контроллера.
 
@@ -100,10 +102,7 @@ class SessionCoordinator:
         """Вызывается из read-циклов CRSF / MAVLink для каждого декодированного
         кадра телеметрии.
 
-        Пробрасываем только сообщения, которые GCS реально отрисовывает:
-        battery (оверлей) и command_ack (лог отладки arm). Высокочастотное
-        (attitude / gps) насытило бы JSON-канал; при необходимости позже оно
-        пойдёт через бинарный packet-канал.
+        Пробрасываем только сообщения, которые GCS реально отрисовывает
         """
         if self._manager is None or self._manager.channels is None:
             return
@@ -140,6 +139,7 @@ class SessionCoordinator:
             except Exception as exc:
                 logger.debug('[coord] ошибка проброса fc_armed: %s', exc)
 
+    #### Диспетчеризация сигналинга ########################################################
     async def _on_message(self, msg: dict) -> None:
         kind = msg.get('type')
         match kind:
@@ -245,6 +245,7 @@ class SessionCoordinator:
         if isinstance(gcs_id, str) and isinstance(cand, dict):
             await self._manager.handle_ice(gcs_id, cand)
 
+    #### Обработка config-канала ###########################################################
     def _on_config_message(self, payload: dict | list) -> None:
         if not isinstance(payload, dict):
             logger.warning('[coord] config-сообщение должно быть объектом, получено %s', type(payload).__name__)
@@ -297,11 +298,6 @@ class SessionCoordinator:
         if not changed:
             return
         logger.info('[coord] параметры изменились, завершаем сессию для пересогласования')
-        if self._manager is not None and self._manager.channels is not None:
-            cfg = self._manager.channels.config
-            if cfg is not None:
-                cfg.send_json({'type': 'cameras_changed',
-                               'device_indices': sorted(c.device_index for c in cameras)})
         assert self._loop is not None
         asyncio.run_coroutine_threadsafe(
             self._signal_client.send({'type': 'disconnect_session'}),
@@ -364,28 +360,12 @@ class SessionCoordinator:
         )
         self._teardown()
 
+    #### События камер и пайплайна #########################################################
     def _on_cameras_changed(self, new_ids: set[int]) -> None:
         logger.info('[coord] набор камер изменился: %s, завершаем сессию', sorted(new_ids))
-        # СНАЧАЛА инвалидируем in-memory кэш камер, до любого short-circuit ниже:
-        # _on_pipeline_error мог уже снести manager (камеру выдернули → чтение
-        # v4l2 падает → ошибка пайплайна срабатывает раньше 5-секундного опроса
-        # watcher). Если clear_cache спрятать за проверкой ненулевого manager,
-        # следующая сборка пайплайна увидит устаревший кэш, попробует снова
-        # открыть выдернутое устройство, опять упадёт, и сессия зациклится без
-        # восстановления. _scan переиспользует *.json на диске для любого
-        # устройства, чьё имя ещё совпадает; перекалибруются только реально
-        # новые устройства.
         CameraManager.clear_cache()
         if self._manager is None:
             return
-        if self._manager.channels is not None:
-            self._manager.channels.config.send_json({
-                'type': 'cameras_changed',
-                'device_indices': sorted(new_ids),
-            })
-        # Просим сервер сбросить пару пиров и уведомить GCS, затем завершаем
-        # локально. Новый пайплайн соберётся при следующем 'connect' от сервера
-        # с актуальными камерами.
         assert self._loop is not None
         asyncio.run_coroutine_threadsafe(
             self._signal_client.send({'type': 'disconnect_session'}),

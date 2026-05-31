@@ -57,10 +57,7 @@ def immediate_glib_bytes():
         yield m
 
 
-# ============================================================================
-# PacketChannel
-# ============================================================================
-
+#### PacketChannel #####################################################################
 def test_packet_channel_starts_closed():
     ch = _make_channel_mock()
     pc = PacketChannel(ch)
@@ -148,10 +145,7 @@ def test_packet_channel_handler_errors_swallowed():
     pc._on_data(ch, buf)  # should not raise
 
 
-# ============================================================================
-# PingChannel
-# ============================================================================
-
+#### PingChannel #######################################################################
 def test_ping_echoes_messages_when_open(immediate_glib_bytes):
     ch = _make_channel_mock()
     pc = PingChannel(ch)
@@ -184,10 +178,7 @@ def test_ping_ignores_none_and_empty():
     ch.emit.assert_not_called()
 
 
-# ============================================================================
-# ConfigChannel
-# ============================================================================
-
+#### ConfigChannel #####################################################################
 def test_config_send_json_when_closed_is_noop(immediate_glib_bytes):
     ch = _make_channel_mock()
     cc = ConfigChannel(ch)
@@ -284,10 +275,7 @@ def test_config_on_open_does_not_fire_when_closed():
     assert opens == []
 
 
-# ============================================================================
-# DataChannelHub
-# ============================================================================
-
+#### DataChannelHub ####################################################################
 def test_hub_creates_three_channels():
     webrtc = MagicMock()
     counter = {'n': 0}

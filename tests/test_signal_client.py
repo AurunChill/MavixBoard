@@ -15,8 +15,7 @@ import websockets
 from mavixboard.server.signal_client import SignalClient
 
 
-# ---------- unit tests with mocked ws_connect ----------
-
+#### unit tests with mocked ws_connect #################################################
 async def test_connect_returns_true_on_success():
     fake_conn = AsyncMock()
     with patch(
@@ -63,8 +62,7 @@ async def test_disconnect_noop_when_not_connected():
     assert client.is_connected is False
 
 
-# ---------- integration with a real websockets server ----------
-
+#### integration with a real websockets server #########################################
 class _StubServer:
     def __init__(self) -> None:
         self.received_headers: dict = {}

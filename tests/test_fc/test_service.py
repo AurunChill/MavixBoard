@@ -42,8 +42,7 @@ class _FakeController:
             self._on_packet(data)
 
 
-# ---------- start / stop ----------
-
+#### start / stop ######################################################################
 async def test_service_start_finds_controller():
     fake = _FakeController(kind='crsf', name='TBS')
 
@@ -111,8 +110,7 @@ async def test_service_stop_without_start_does_not_raise():
     await svc.stop()
 
 
-# ---------- packet callback ----------
-
+#### packet callback ###################################################################
 async def test_service_forwards_packet_callback():
     fake = _FakeController()
 
@@ -152,8 +150,7 @@ async def test_service_set_packet_callback_after_connect():
     await svc.stop()
 
 
-# ---------- send ----------
-
+#### send ##############################################################################
 async def test_service_send_routes_to_controller():
     fake = _FakeController()
 
@@ -182,8 +179,7 @@ async def test_service_send_without_controller_is_noop():
     await svc.stop()
 
 
-# ---------- change callback ----------
-
+#### change callback ###################################################################
 async def test_service_change_callback_called_on_connect():
     fake = _FakeController(kind='mavlink', name='ardupilot')
 
@@ -223,8 +219,7 @@ async def test_service_change_callback_errors_swallowed():
     await svc.stop()
 
 
-# ---------- reconnect ----------
-
+#### reconnect #########################################################################
 async def test_service_reconnects_after_controller_dies():
     """If controller becomes is_running=False, service re-detects."""
     fake1 = _FakeController(name='first')

@@ -29,8 +29,7 @@ def test_ws_url_unscheme_passthrough():
     assert s.ws_url == 'localhost:8000/ws/drone'
 
 
-# ---------- preset.env support ----------
-
+#### preset.env support ################################################################
 def test_preset_env_loaded_when_present(tmp_path, monkeypatch):
     """If /etc/mavixboard/preset.env exists at import time, its values are
     available via os.environ. Local .env still overrides them so dev work
@@ -68,7 +67,7 @@ def test_local_env_overrides_preset(tmp_path, monkeypatch):
     assert os.environ.get('USER_ID') == 'local-user-abc'
 
 
-# ---------- DRONE_ID / DRONE_TOKEN from preset.env ----------
+#### DRONE_ID / DRONE_TOKEN from preset.env ############################################
 # The server bakes these into preset.env at install/build time. Settings
 # must read them so the board can use DRONE_TOKEN for WS auth instead
 # of a locally-generated random token (which the server doesn't know).
@@ -111,7 +110,7 @@ def test_drone_token_loaded_from_preset_env_file(tmp_path, monkeypatch):
     assert s.signal_server_ip == 'http://srv:8000'
 
 
-# ---------- Log / data path resolution ----------
+#### Log / data path resolution ########################################################
 # Source-tree runs use _PROJECT_ROOT/_log and _data; production installs set
 # MAVIXBOARD_LOG_DIR / MAVIXBOARD_DATA_DIR via systemd to writable
 # locations under /var. Without env var AND without the dev tree, fall

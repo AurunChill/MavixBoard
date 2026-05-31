@@ -18,9 +18,7 @@ from mavixboard.gstreamer.gstreamer import GStreamerPipe
 from mavixboard.gstreamer.pipeline import PipelineBuilder
 
 
-# ─── fixtures ────────────────────────────────────────────────────────────────
-
-
+#### fixtures ##########################################################################
 @pytest.fixture
 def cam_params():
     return CameraParams(width=640, height=480, fps=30, format='YUYV')
@@ -42,9 +40,7 @@ def patch_stun_turn(monkeypatch):
     monkeypatch.setattr(settings, 'turn_server', '')
 
 
-# ─── CameraParams ─────────────────────────────────────────────────────────────
-
-
+#### CameraParams ######################################################################
 class TestCameraParams:
     def test_fields_are_set(self, cam_params):
         assert cam_params.width == 640
@@ -67,9 +63,7 @@ class TestCameraParams:
         assert d == {'width': 640, 'height': 480, 'fps': 30, 'format': 'YUYV'}
 
 
-# ─── Camera ───────────────────────────────────────────────────────────────────
-
-
+#### Camera ############################################################################
 class TestCamera:
     def test_default_bitrate(self, cam_params):
         cam = Camera(device_index=1, name='Cam', params=[cam_params], param_index=0)
@@ -110,9 +104,7 @@ class TestCamera:
         assert loaded.params[0].fps == 30
 
 
-# ─── V4l2Scanner ──────────────────────────────────────────────────────────────
-
-
+#### V4l2Scanner #######################################################################
 V4L2_LIST_DEVICES_OUTPUT = """\
 USB Camera (usb-0000:01:00.0-1.2) (usb-...):
 \t/dev/video0
@@ -240,9 +232,7 @@ class TestV4l2Scanner:
         assert isinstance(params, set)
 
 
-# ─── CameraCalibrator ─────────────────────────────────────────────────────────
-
-
+#### CameraCalibrator ##################################################################
 def _make_gst_mock(set_state_return, get_state_return):
     import mavixboard.gstreamer.camera as cam_module
     Gst = cam_module.Gst
@@ -326,9 +316,7 @@ class TestCameraCalibrator:
         pipeline.set_state.assert_any_call(Gst.State.NULL)
 
 
-# ─── CameraRegistry ───────────────────────────────────────────────────────────
-
-
+#### CameraRegistry ####################################################################
 class TestCameraRegistry:
     def test_get_cameras_calls_scan(self, camera):
         scanner = MagicMock()
@@ -416,9 +404,7 @@ class TestCameraRegistry:
         scanner.parse_camera_params.assert_called_once()
 
 
-# ─── PipelineBuilder ──────────────────────────────────────────────────────────
-
-
+#### PipelineBuilder ###################################################################
 class TestPipelineBuilder:
     def test_build_description_uses_stun_from_settings(self, camera):
         desc = PipelineBuilder.build_pipeline_description([camera])
@@ -428,10 +414,14 @@ class TestPipelineBuilder:
         desc = PipelineBuilder.build_pipeline_description([camera])
         assert 'turn-server' not in desc
 
-    def test_build_description_includes_turn_when_set(self, camera, monkeypatch):
+    def test_build_description_omits_turn_property_even_when_set(self, camera, monkeypatch):
+        # TURN намеренно НЕ кладётся в строку пайплайна как property: он
+        # регистрируется позже сигналом add-turn-server в PeerSession (иначе
+        # webrtcbin отвергает дубль). Поэтому turn-server не должен попадать
+        # в описание даже при заданном TURN_SERVER.
         monkeypatch.setattr(settings, 'turn_server', 'turn://user:pass@test:3478')
         desc = PipelineBuilder.build_pipeline_description([camera])
-        assert 'turn-server=turn://user:pass@test:3478' in desc
+        assert 'turn-server' not in desc
 
     def test_build_description_has_webrtcbin(self, camera):
         desc = PipelineBuilder.build_pipeline_description([camera])
@@ -486,9 +476,7 @@ class TestPipelineBuilder:
         assert PipelineBuilder._build_decoder('YUYV') == ''
 
 
-# ─── GStreamerPipe ─────────────────────────────────────────────────────────────
-
-
+#### GStreamerPipe #####################################################################
 @pytest.fixture
 def gst_pipe(camera):
     import mavixboard.gstreamer.gstreamer as gs_module
@@ -500,6 +488,13 @@ def gst_pipe(camera):
     mock_bus = MagicMock()
     mock_pipeline.get_by_name.return_value = mock_webrtc
     mock_pipeline.get_bus.return_value = mock_bus
+    # start() блокирующе ждёт get_state и распаковывает 3 значения
+    # (ret, state, pending) — отдаём корректный кортеж «успех + PLAYING».
+    mock_pipeline.get_state.return_value = (
+        Gst.StateChangeReturn.SUCCESS,
+        Gst.State.PLAYING,
+        None,
+    )
     Gst.parse_launch.return_value = mock_pipeline
 
     with patch('mavixboard.gstreamer.pipeline.PipelineBuilder.build_pipeline_description', return_value='desc'):

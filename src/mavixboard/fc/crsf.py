@@ -21,6 +21,7 @@ class CRSF:
         0x29: 'DEVICE_INFO',
     }
 
+    #### Кодек и кадры #####################################################################
     @staticmethod
     def crc8(data: bytes) -> int:
         crc = 0
@@ -52,6 +53,7 @@ class CRSF:
     def ping_frame() -> bytes:
         return CRSF._frame(0x28, bytes([0xC8, 0xEE]))
 
+    #### Разбор кадров #####################################################################
     @staticmethod
     def parse_frames(buf: bytearray) -> Iterator[tuple[int, bytes]]:
         while len(buf) >= 4:
@@ -70,6 +72,7 @@ class CRSF:
             if CRSF.crc8(raw[2:-1]) == raw[-1]:
                 yield raw[2], raw[3:-1]
 
+    #### Декодирование телеметрии ##########################################################
     @staticmethod
     def decode_telemetry(ftype: int, payload: bytes) -> dict | None:
         p = payload
@@ -98,6 +101,7 @@ class CRSF:
                 pass
         return None
 
+    #### Преобразование стиков #############################################################
     @staticmethod
     def axis_to_crsf(v: float, dz: float = 0.05) -> int:
         if abs(v) < dz:

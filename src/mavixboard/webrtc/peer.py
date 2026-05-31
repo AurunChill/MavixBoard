@@ -13,6 +13,7 @@ from mavixboard.core.logger import logger
 
 
 class PeerSession:
+    #### Жизненный цикл ####################################################################
     def __init__(
         self,
         gcs_id: str,
@@ -60,6 +61,7 @@ class PeerSession:
         except (TypeError, AttributeError):
             pass
 
+    #### Обработчики WebRTC ################################################################
     def _on_negotiation_needed(self, _element: Gst.Element) -> None:
         logger.info('[peer %s] требуется согласование, создаём offer', self.gcs_id)
         promise = Gst.Promise.new_with_change_func(self._on_offer_created, self._webrtc, None)
@@ -115,6 +117,7 @@ class PeerSession:
         logger.info('[peer %s] ICE connection state -> %s',
                     self.gcs_id, state.value_nick if hasattr(state, 'value_nick') else state)
 
+    #### Публичный API #####################################################################
     def apply_answer(self, sdp_data: dict) -> bool:
         if sdp_data.get('type') != 'answer':
             logger.warning('[peer %s] ожидался answer, получен %s', self.gcs_id, sdp_data.get('type'))

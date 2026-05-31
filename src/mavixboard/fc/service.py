@@ -28,6 +28,7 @@ class FCService:
         self._loop_task: asyncio.Task | None = None
         self._stop_event: asyncio.Event | None = None
 
+    #### Свойства и колбэки ################################################################
     @property
     def is_connected(self) -> bool:
         return self._controller is not None and self._controller.is_running
@@ -61,6 +62,7 @@ class FCService:
             if setter is not None:
                 setter(cb)
 
+    #### Публичный API #####################################################################
     async def send(self, data: bytes) -> None:
         if self._controller is None:
             return
@@ -86,6 +88,7 @@ class FCService:
             self._loop_task = None
         await self._teardown_controller()
 
+    #### Внутренние помощники ##############################################################
     async def _scan_loop(self) -> None:
         logger.info('[fc-service] цикл сканирования запущен')
         assert self._stop_event is not None

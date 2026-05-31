@@ -35,7 +35,9 @@ async def test_peer_close_disconnects_handlers():
     loop = asyncio.get_running_loop()
     peer = PeerSession('gcs-1', webrtc, loop)
     peer.close()
-    assert webrtc.disconnect.call_count == 2
+    # PeerSession подключает 4 сигнала (negotiation, ice-candidate,
+    # ice-gathering-state, ice-connection-state) — close() снимает все 4.
+    assert webrtc.disconnect.call_count == 4
 
 
 async def test_peer_ice_candidate_callback_enqueues():

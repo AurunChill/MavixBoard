@@ -42,6 +42,7 @@ class WebRTCManager:
     def channels(self) -> DataChannelHub | None:
         return self._channels
 
+    #### Жизненный цикл сессии #############################################################
     def start_session(self, gcs_id: str, cameras: list | None = None) -> None:
         if self._peer is not None:
             logger.warning('[manager] сессия уже активна (gcs=%s), завершаем перед новой', self._peer.gcs_id)
@@ -73,6 +74,7 @@ class WebRTCManager:
         if self.on_session_ended:
             self.on_session_ended()
 
+    #### Привязка каналов ##################################################################
     def _wire_channels(self) -> None:
         if self._channels is None:
             return
@@ -105,6 +107,7 @@ class WebRTCManager:
                         cnt, len(data), data[:6].hex())
         asyncio.run_coroutine_threadsafe(self._fc_service.send(data), self._loop)
 
+    #### Состояние для GCS #################################################################
     def _send_config_open(self) -> None:
         """Вызывается при переходе config data-канала в OPEN.
 
@@ -143,6 +146,7 @@ class WebRTCManager:
             payload = [getattr(cam, '__dict__', {}) for cam in self._cameras]
         self._channels.config.send_json({'type': 'cameras', 'cameras': payload})
 
+    #### Обработка сигналинга ##############################################################
     async def handle_sdp(self, gcs_id: str, sdp_data: dict) -> None:
         if not self._guard(gcs_id):
             return
@@ -164,6 +168,7 @@ class WebRTCManager:
             return False
         return True
 
+    #### Насосы ICE и offer ################################################################
     async def _pump_ice(self) -> None:
         assert self._peer is not None
         peer = self._peer

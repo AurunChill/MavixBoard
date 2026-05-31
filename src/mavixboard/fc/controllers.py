@@ -26,6 +26,7 @@ from mavixboard.fc.mavlink import (
 PacketCallback = Callable[[bytes], None]
 
 
+#### Протоколы и типы ##################################################################
 class FlightController(Protocol):
     kind: str
     name: str
@@ -38,6 +39,7 @@ class FlightController(Protocol):
     def is_running(self) -> bool: ...
 
 
+#### Контроллер MAVLINK ################################################################
 class MavlinkController:
     kind = 'mavlink'
 
@@ -203,6 +205,7 @@ class MavlinkController:
             return None, True
 
 
+#### Контроллер CRSF ###################################################################
 class CrsfController:
     kind = 'crsf'
     # Betaflight / INAV считают RC-линк живым по LINK_STATISTICS

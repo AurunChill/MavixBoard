@@ -31,6 +31,7 @@ DEFAULT_PORTS: tuple[str, ...] = (
 )
 
 
+#### Публичный API #####################################################################
 async def detect(
     ports: tuple[str, ...] = DEFAULT_PORTS,
     mavlink_baud: int = 115200,
@@ -68,6 +69,7 @@ async def detect(
     return None
 
 
+#### Внутренние помощники ##############################################################
 async def _try_mavlink(port: str, baud: int, timeout: float) -> MavlinkController | None:
     def _probe() -> tuple[str, mavutil.mavlink_connection] | None:
         conn = None

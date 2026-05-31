@@ -71,8 +71,7 @@ def _open_channel(channel_mock):
     channel_mock.get_property.return_value = state
 
 
-# ============================================================================
-
+#### Тесты #############################################################################
 async def test_manager_creates_channels_on_start_session():
     webrtc = _make_webrtc_mock()
     send = AsyncMock()

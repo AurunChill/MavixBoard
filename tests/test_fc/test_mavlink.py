@@ -11,8 +11,7 @@ from mavixboard.fc.mavlink import (
 )
 
 
-# ---------- parse_msg_id ----------
-
+#### parse_msg_id ######################################################################
 def test_parse_msg_id_v1_format():
     # MAVLink v1: 0xFE + len + seq + sys + comp + msgid (byte) + payload + crc
     data = b'\xFE\x00\x00\x01\x01\x21' + b'\x00' * 4  # msg_id = 0x21 (33)
@@ -50,8 +49,7 @@ def test_parse_msg_id_unknown_magic_returns_none():
     assert parse_msg_id(b'\xAB\x00\x00\x00\x00\x01\x01\x00') is None
 
 
-# ---------- constants sanity ----------
-
+#### constants sanity ##################################################################
 def test_important_messages_includes_heartbeat_and_param_value():
     assert MSG_HEARTBEAT in IMPORTANT_MSGS
     assert MSG_PARAM_VALUE in IMPORTANT_MSGS
@@ -73,8 +71,7 @@ def test_mav_type_known_ids():
     assert MAV_TYPE[13] == 'hexarotor'
 
 
-# ---------- should_throttle_msg ----------
-
+#### should_throttle_msg ###############################################################
 def test_should_throttle_msg_important_always_passes():
     counters = [0] * 300
     for _ in range(50):

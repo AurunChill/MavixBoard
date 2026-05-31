@@ -15,6 +15,7 @@ PacketHandler = Callable[[bytes], None]
 StringHandler = Callable[[str], None]
 
 
+#### Базовый канал #####################################################################
 def _channel_init(spec: str):
     structure, _ = Gst.Structure.from_string(spec)
     return structure
@@ -50,6 +51,7 @@ class _BaseChannel:
         self._open = False
 
 
+#### Каналы данных #####################################################################
 class PacketChannel(_BaseChannel):
     INIT_SPEC = 'application/x-data-channel-init,ordered=true,max-retransmits=2,bitrate=6000000'
 
@@ -155,6 +157,7 @@ class ConfigChannel(_BaseChannel):
                 logger.warning('[dc:config] on_open error: %s', exc)
 
 
+#### Хаб каналов #######################################################################
 class DataChannelHub:
     """Создаёт и владеет всеми тремя data-каналами одной сессии пира."""
 

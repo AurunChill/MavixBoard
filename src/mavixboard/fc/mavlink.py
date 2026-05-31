@@ -39,6 +39,7 @@ MAV_CMD_NAMES = {
 }
 
 
+#### Декодеры сообщений ################################################################
 def decode_statustext(msg: object) -> dict | None:
     """STATUSTEXT (msgid 253) — человекочитаемое сообщение от PX4.
 
@@ -159,6 +160,7 @@ def decode_battery(msg: object) -> dict | None:
     return None
 
 
+#### Таблицы и разбор ##################################################################
 MAV_AUTOPILOT = {0: 'generic', 3: 'ardupilot', 12: 'px4'}
 MAV_TYPE = {
     0: 'generic', 1: 'fixed_wing', 2: 'quadrotor', 4: 'helicopter',

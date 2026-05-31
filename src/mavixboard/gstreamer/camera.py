@@ -18,6 +18,7 @@ from mavixboard.core.logger import logger
 from mavixboard.gstreamer.pipeline import PipelineBuilder
 
 
+#### Структуры данных ##################################################################
 @dataclass
 class CameraParams:
     width: int
@@ -51,6 +52,7 @@ class Camera:
             return None
 
 
+#### Сканер v4l2 #######################################################################
 class V4l2Scanner:
     def __init__(self, command: str | None = None) -> None:
         self.command: str | None = command if command is not None else shutil.which('v4l2-ctl')
@@ -123,6 +125,7 @@ class V4l2Scanner:
         return params
 
 
+#### Калибратор ########################################################################
 class CameraCalibrator:
     @staticmethod
     def calibrate(device_index: int, raw_params: set[tuple[int, int, int, str]]) -> list[CameraParams]:
@@ -155,6 +158,7 @@ class CameraCalibrator:
         return supported_params
 
 
+#### Реестр камер ######################################################################
 class CameraRegistry:
     def __init__(
         self,
@@ -223,6 +227,7 @@ class CameraRegistry:
         return cameras
 
 
+#### Фасад менеджера камер #############################################################
 _default_registry: CameraRegistry | None = None
 
 
