@@ -14,6 +14,11 @@ MSG_COMMAND_ACK = 77
 MSG_BATTERY_STATUS = 147
 MSG_STATUSTEXT = 253
 
+# Размер таблицы счётчиков троттлинга = диапазон MAVLink msgid (msgid >= MAX_MSG_ID
+# не троттлим/не шлём). Для неважных сообщений пропускаем 1 из THROTTLE_RATIO.
+MAX_MSG_ID = 300
+THROTTLE_RATIO = 20
+
 # MAV_SEVERITY codes — для человекочитаемой строки в логе.
 MAV_SEVERITY = {
     0: 'EMERGENCY', 1: 'ALERT', 2: 'CRITICAL', 3: 'ERROR',
@@ -181,13 +186,13 @@ def parse_msg_id(data: bytes) -> int | None:
 def should_throttle_msg(msg_id: int | None, counters: list[int]) -> bool:
     """Возвращает True, если сообщение нужно отправить.
 
-    Для неважных сообщений применяет троттлинг 20:1. `counters` — список
-    из 300 чисел, мутируется на месте: инкрементируется для каждого
-    неважного сообщения.
+    Для неважных сообщений применяет троттлинг THROTTLE_RATIO:1. `counters` —
+    список из MAX_MSG_ID чисел, мутируется на месте: инкрементируется для
+    каждого неважного сообщения.
     """
-    if msg_id is None or msg_id >= 300:
+    if msg_id is None or msg_id >= MAX_MSG_ID:
         return False
     if msg_id in IMPORTANT_MSGS:
         return True
     counters[msg_id] += 1
-    return counters[msg_id] % 20 == 0
+    return counters[msg_id] % THROTTLE_RATIO == 0

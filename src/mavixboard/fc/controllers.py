@@ -11,9 +11,10 @@ from pymavlink import mavutil
 
 from mavixboard.core.logger import logger
 from mavixboard.fc.crsf import BAUDRATE as CRSF_BAUDRATE
-from mavixboard.fc.crsf import CRSF
+from mavixboard.fc.crsf import CRSF, FRAME_RC_CHANNELS, VALID_ADDRESSES
 from mavixboard.fc.mavlink import (
     MAV_AUTOPILOT,
+    MAX_MSG_ID,
     MSG_HEARTBEAT,
     decode_battery,
     decode_command_ack,
@@ -24,6 +25,15 @@ from mavixboard.fc.mavlink import (
 )
 
 PacketCallback = Callable[[bytes], None]
+
+# MAVLink system-id нашего GCS: HEARTBEAT с таким src — наш собственный
+# исходящий, а не реальный полётник, поэтому им не обновляем имя/armed FC.
+GCS_SYSTEM_ID = 255
+
+# Раскладка заголовка CRSF-кадра — по ней RC-репитер опознаёт RC-кадр.
+FRAME_ADDR_INDEX = 0       # байт device-address (sync начала кадра)
+FRAME_TYPE_INDEX = 2       # байт типа кадра
+FRAME_HEADER_MIN_LEN = 3   # минимум байт, чтобы прочитать адрес/длину/тип
 
 
 #### Протоколы и типы ##################################################################
@@ -50,7 +60,7 @@ class MavlinkController:
         self._on_telemetry: Callable[[dict], None] | None = None
         self._task: asyncio.Task | None = None
         self._closed = False
-        self._counters = [0] * 300
+        self._counters = [0] * MAX_MSG_ID
         # Отслеживаем фронт armed-состояния, чтобы логировать только переходы.
         self._last_armed: bool | None = None
 
@@ -135,13 +145,13 @@ class MavlinkController:
                     continue
                 raw = msg.get_msgbuf()
                 msg_id = parse_msg_id(raw)
-                if msg_id == MSG_HEARTBEAT and msg.get_srcSystem() != 255:
+                if msg_id == MSG_HEARTBEAT and msg.get_srcSystem() != GCS_SYSTEM_ID:
                     self.name = MAV_AUTOPILOT.get(getattr(msg, 'autopilot', 0), 'MAVLink FC')
                 # HEARTBEAT несёт *реальное* armed-состояние в base_mode.
                 # Лог перехода показывает, закрепилась ли предыдущая
                 # COMMAND_ARM_DISARM или PX4 авто-дизармнул.
                 hb = decode_heartbeat_armed(msg) if msg_id == MSG_HEARTBEAT else None
-                if hb is not None and msg.get_srcSystem() != 255:
+                if hb is not None and msg.get_srcSystem() != GCS_SYSTEM_ID:
                     if self._last_armed is None or hb['armed'] != self._last_armed:
                         logger.info('[mavlink] полётник armed=%s (custom_mode=0x%08x system_status=%d)',
                                     hb['armed'], hb['custom_mode'], hb['system_status'])
@@ -223,7 +233,7 @@ class CrsfController:
     # уйдёт в свой штатный RXLOSS-failsafe).
     RC_PUMP_INTERVAL_SECONDS = 0.005
     RC_FRAME_TIMEOUT_SECONDS = 0.6
-    RC_FRAME_TYPE = 0x16
+    RC_FRAME_TYPE = FRAME_RC_CHANNELS
 
     def __init__(self, port: str, name: str = 'CRSF FC') -> None:
         self._port = port
@@ -310,12 +320,12 @@ class CrsfController:
             elif self._writer is None:
                 logger.warning('[crsf] отправка отброшена (writer не инициализирован)')
             return
-        # data[0] — CRSF device-address (sync-байт начала кадра): 0xC8 — FC,
-        # 0xEE — TX-модуль, 0xEC — приёмник (RX), 0x00 — broadcast. Берём кадр,
-        # только если адрес валидный и это RC-кадр (data[2] == RC_FRAME_TYPE).
-        if (len(data) >= 3
-                and data[0] in (0xC8, 0xEE, 0xEC, 0x00)
-                and data[2] == self.RC_FRAME_TYPE):
+        # Кладём кадр в RC-кэш, только если заголовок похож на RC-кадр:
+        # валидный device-address (VALID_ADDRESSES) и тип == FRAME_RC_CHANNELS.
+        # Прочие кадры (config/telemetry) идут ниже в UART напрямую.
+        if (len(data) >= FRAME_HEADER_MIN_LEN
+                and data[FRAME_ADDR_INDEX] in VALID_ADDRESSES
+                and data[FRAME_TYPE_INDEX] == self.RC_FRAME_TYPE):
             self._latest_rc_frame = bytes(data)
             self._last_rc_recv = asyncio.get_event_loop().time()
             cnt = self._rc_recv_count + 1
