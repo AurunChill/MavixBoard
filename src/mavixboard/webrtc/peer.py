@@ -9,7 +9,9 @@ gi.require_version('GstWebRTC', '1.0')
 gi.require_version('GstSdp', '1.0')
 from gi.repository import Gst, GstSdp, GstWebRTC
 
+from mavixboard.core.config import settings
 from mavixboard.core.logger import logger
+from mavixboard.gstreamer.pipeline import _build_turn_url, _redact_url
 
 
 class PeerSession:
@@ -40,7 +42,6 @@ class PeerSession:
         self._register_turn_server()
 
     def _register_turn_server(self) -> None:
-        from mavixboard.gstreamer.pipeline import _build_turn_url, _redact_url
         turn_url = _build_turn_url()
         if not turn_url:
             return
@@ -106,7 +107,7 @@ class PeerSession:
         except Exception:
             complete_state = None
         if complete_state is not None and state == complete_state:
-            if self._cand_counts.get('relay', 0) == 0:
+            if settings.turn_server and self._cand_counts.get('relay', 0) == 0:
                 logger.warning('[peer %s] gathering завершён, но НЕТ relay-кандидатов — '
                                'TURN не работает; клиенты за симметричным NAT не подключатся. '
                                'Проверь формат TURN URL (turn://user:pass@host:port?transport=udp), '

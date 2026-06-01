@@ -57,6 +57,9 @@ class CRSF:
     @staticmethod
     def parse_frames(buf: bytearray) -> Iterator[tuple[int, bytes]]:
         while len(buf) >= 4:
+            # buf[0] — CRSF device-address (sync начала кадра): 0xC8 — FC,
+            # 0xEE — TX-модуль, 0xEC — RX, 0x00 — broadcast. Если байт не из
+            # этого набора — сдвигаемся на 1 и ищем начало валидного кадра.
             if buf[0] not in (0xC8, 0xEE, 0xEC, 0x00):
                 buf.pop(0)
                 continue

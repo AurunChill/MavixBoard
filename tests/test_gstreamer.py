@@ -13,6 +13,7 @@ from mavixboard.gstreamer.camera import (
     CameraParams,
     CameraRegistry,
     V4l2Scanner,
+    _strip_usb_path,
 )
 from mavixboard.gstreamer.gstreamer import GStreamerPipe
 from mavixboard.gstreamer.pipeline import PipelineBuilder
@@ -165,10 +166,8 @@ class TestV4l2Scanner:
         mock_result.stdout = V4L2_LIST_DEVICES_OUTPUT
         with patch('subprocess.run', return_value=mock_result):
             names = scanner.get_device_names()
-        assert '/dev/video0' in names
-        assert 'USB Camera (usb-0000:01:00.0-1.2) (usb-...)' in names['/dev/video0']
-        assert '/dev/video2' in names
-        assert 'Integrated Camera' in names['/dev/video2']
+        assert names['/dev/video0'] == 'USB Camera'  # хвосты (usb-...) срезаны
+        assert names['/dev/video2'] == 'Integrated Camera'
 
     def test_get_device_names_returns_empty_on_error(self):
         scanner = V4l2Scanner(command='/usr/bin/v4l2-ctl')
@@ -178,6 +177,29 @@ class TestV4l2Scanner:
         mock_result.stderr = 'some error'
         with patch('subprocess.run', return_value=mock_result):
             assert scanner.get_device_names() == {}
+
+    def test_strip_usb_path_removes_port(self):
+        assert _strip_usb_path('HD Webcam: HD Webcam (usb-0000:00:14.0-10)') == 'HD Webcam: HD Webcam'
+
+    def test_strip_usb_path_keeps_vid_pid(self):
+        assert _strip_usb_path('UVC Camera (046d:0825) (usb-0000:00:14.0-1)') == 'UVC Camera (046d:0825)'
+
+    def test_strip_usb_path_no_usb_unchanged(self):
+        assert _strip_usb_path('Integrated Camera') == 'Integrated Camera'
+
+    def test_get_device_names_identical_cameras_share_name(self):
+        scanner = V4l2Scanner(command='/usr/bin/v4l2-ctl')
+        output = (
+            'HD Webcam: HD Webcam (usb-0000:00:14.0-10):\n'
+            '    /dev/video0\n'
+            'HD Webcam: HD Webcam (usb-0000:00:14.0-11):\n'
+            '    /dev/video2\n'
+        )
+        mock_result = MagicMock(returncode=0, stdout=output)
+        with patch('subprocess.run', return_value=mock_result):
+            names = scanner.get_device_names()
+        # одинаковые камеры на разных портах → одно имя (общий кэш калибровки)
+        assert names['/dev/video0'] == names['/dev/video2'] == 'HD Webcam: HD Webcam'
 
     def test_filter_capture_devices_returns_empty_when_no_command(self):
         scanner = V4l2Scanner(command=None)
@@ -353,24 +375,6 @@ class TestCameraRegistry:
         registry.clear_cache()
         registry.get_cameras()
         assert scanner.is_available.call_count == 2
-
-    def test_get_by_index_returns_correct_camera(self, camera, tmp_path):
-        camera.save()
-        scanner = MagicMock()
-        scanner.is_available.return_value = True
-        scanner.get_device_names.return_value = {'/dev/video0': 'Test Camera'}
-        scanner.filter_capture_devices.return_value = ['/dev/video0']
-        scanner.parse_camera_params.return_value = set()
-        registry = CameraRegistry(scanner=scanner)
-        result = registry.get_by_index(0)
-        assert result is not None
-        assert result.name == 'Test Camera'
-
-    def test_get_by_index_returns_none_for_unknown(self):
-        scanner = MagicMock()
-        scanner.is_available.return_value = False
-        registry = CameraRegistry(scanner=scanner)
-        assert registry.get_by_index(99) is None
 
     def test_scan_returns_empty_when_no_v4l2(self):
         scanner = MagicMock()

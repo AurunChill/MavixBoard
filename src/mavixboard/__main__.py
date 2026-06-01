@@ -15,7 +15,7 @@ from mavixboard.core.config import settings
 from mavixboard.core.glib_loop import GLibMainLoopThread
 from mavixboard.core.logger import logger, setup_file_logging
 from mavixboard.fc.service import FCService
-from mavixboard.gstreamer.camera import CameraManager
+from mavixboard.gstreamer.camera import get_default_registry
 from mavixboard.gstreamer.gstreamer import GStreamerPipe
 from mavixboard.gstreamer.watcher import CameraWatcher
 from mavixboard.server.signal_client import SignalClient
@@ -24,7 +24,6 @@ from mavixboard.server.signal_client import SignalClient
 #### Подготовка окружения ##############################################################
 def _init_dirs() -> None:
     settings.log_path.parent.mkdir(parents=True, exist_ok=True)
-    settings.token_path.parent.mkdir(parents=True, exist_ok=True)
     settings.data_path.mkdir(parents=True, exist_ok=True)
     setup_file_logging()
 
@@ -36,7 +35,7 @@ def _build_pipeline() -> GStreamerPipe | None:
     # (новое имя) или кэш сброшен из-за того, что CameraWatcher заметил смену
     # набора устройств, CameraRegistry._scan уходит на калибровку именно
     # этого устройства.
-    cameras = CameraManager.get_cameras(force_update=False)
+    cameras = get_default_registry().get_cameras(force_update=False)
     if not cameras:
         logger.error('[app] камеры не найдены')
         return None

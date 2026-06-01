@@ -104,7 +104,6 @@ def test_drone_token_loaded_from_preset_env_file(tmp_path, monkeypatch):
         monkeypatch.delenv(key, raising=False)
     load_dotenv(preset, override=False)
     s = Settings()
-    assert s.user_id == 'u-1'
     assert s.drone_id == 'd-1'
     assert s.drone_token == 'tok-1'
     assert s.signal_server_ip == 'http://srv:8000'

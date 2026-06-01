@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import re
 import shutil
 import subprocess
 from dataclasses import dataclass
+from typing import Protocol
 
 import gi
 
@@ -53,6 +55,20 @@ class Camera:
 
 
 #### Сканер v4l2 #######################################################################
+_USB_PATH_RE = re.compile(r'\s*\(usb-[^)]*\)')
+
+
+def _strip_usb_path(name: str) -> str:
+    """Убирает из имени камеры хвост `(usb-...)` — путь USB-порта.
+
+    Имя служит ключом кэша калибровки. Без USB-пути калибровка привязана к
+    самой камере (модели), а не к конкретному порту, поэтому перетыкание в
+    другой USB-порт не вызывает рекалибровку. Card name и VID:PID при этом
+    сохраняются — две камеры одной модели на разных портах дадут одно имя.
+    """
+    return _USB_PATH_RE.sub('', name).strip()
+
+
 class V4l2Scanner:
     def __init__(self, command: str | None = None) -> None:
         self.command: str | None = command if command is not None else shutil.which('v4l2-ctl')
@@ -72,7 +88,7 @@ class V4l2Scanner:
         for line in result.stdout.split('\n'):
             line = line.rstrip()
             if line and not line.startswith('\t') and not line.startswith(' '):
-                cur_name = line.strip().rstrip(':')
+                cur_name = _strip_usb_path(line.strip().rstrip(':'))
             elif line.strip().startswith('/dev/video') and cur_name:
                 device_path = line.strip()
                 device_names[device_path] = cur_name
@@ -159,6 +175,19 @@ class CameraCalibrator:
 
 
 #### Реестр камер ######################################################################
+class CameraSource(Protocol):
+    """Источник камер с кэшем — абстракция для инъекции в координатор.
+
+    Структурно реализуется CameraRegistry. Позволяет SessionCoordinator не
+    зависеть от глобального синглтона и подменять источник (фейк в тестах,
+    демо-камеры) — Dependency Inversion.
+    """
+
+    def get_cameras(self, force_update: bool = False) -> list[Camera]: ...
+
+    def clear_cache(self) -> None: ...
+
+
 class CameraRegistry:
     def __init__(
         self,
@@ -180,9 +209,6 @@ class CameraRegistry:
             camera.save()
         self._cached_cams = cameras
         return cameras
-
-    def get_by_index(self, index: int) -> Camera | None:
-        return next((cam for cam in self.get_cameras() if cam.device_index == index), None)
 
     def _scan(self, force_update: bool = False) -> list[Camera]:
         if not self.scanner.is_available():
@@ -227,7 +253,13 @@ class CameraRegistry:
         return cameras
 
 
-#### Фасад менеджера камер #############################################################
+#### Дефолтный реестр камер ############################################################
+# Ленивый синглтон: один общий CameraRegistry на процесс, то есть общий кэш
+# камер (источник правды). Создаётся при первом обращении, а НЕ инстанцируется
+# на уровне модуля (`= CameraRegistry()`) намеренно: конструктор тянет
+# V4l2Scanner → shutil.which('v4l2-ctl'), и не хочется дёргать ФС на импорте.
+# Так импорт остаётся без side-effect'ов, регистр строится только если реально
+# нужен, и тестам проще (объект не создаётся на каждый import модуля).
 _default_registry: CameraRegistry | None = None
 
 
@@ -236,25 +268,3 @@ def get_default_registry() -> CameraRegistry:
     if _default_registry is None:
         _default_registry = CameraRegistry()
     return _default_registry
-
-
-class CameraManager:
-    @staticmethod
-    def clear_cache() -> None:
-        get_default_registry().clear_cache()
-
-    @staticmethod
-    def get_cameras(force_update: bool = False) -> list[Camera]:
-        return get_default_registry().get_cameras(force_update=force_update)
-
-    @staticmethod
-    def get_by_index(index: int) -> Camera | None:
-        return get_default_registry().get_by_index(index)
-
-    @staticmethod
-    def _get_device_names(command: str) -> dict[str, str]:
-        return V4l2Scanner(command=command).get_device_names()
-
-    @staticmethod
-    def _parse_camera_params(command: str, device_path: str) -> set[tuple[int, int, int, str]]:
-        return V4l2Scanner(command=command).parse_camera_params(device_path)

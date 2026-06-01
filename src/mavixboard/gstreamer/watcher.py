@@ -8,8 +8,6 @@ from collections.abc import Callable
 from mavixboard.core.logger import logger
 from mavixboard.gstreamer.camera import V4l2Scanner
 
-ChangedCallback = Callable[[set[int]], None]
-
 
 #### Перечисление устройств ############################################################
 def _enumerate_capture_indices(scanner: V4l2Scanner) -> set[int]:
@@ -18,16 +16,6 @@ def _enumerate_capture_indices(scanner: V4l2Scanner) -> set[int]:
     Используется циклом опроса для обнаружения hot-plug. НЕ должна
     открывать устройство или запускать калибровку — это гонка с активным
     GStreamer-пайплайном, из-за которой камера ложно считается пропавшей.
-
-    Один `filter_capture_devices` слишком либерален на Raspberry Pi: узлы
-    ISP, кодека, unicam (обычно /dev/video10..23) все объявляют Video
-    Capture, но не дают пригодных raw-форматов. Они появлялись бы и
-    исчезали в счётчике иначе, чем то, что реально оставляет
-    CameraRegistry._scan (он отбрасывает всё с пустым
-    parse_camera_params), и watcher решал бы, что набор меняется на каждом
-    опросе, запуская цикл пересоздания. Поэтому повторяем фильтр _scan:
-    считаем только устройства хотя бы с одной комбинацией
-    width × height × fps × format.
     """
     if not scanner.is_available():
         return set()
@@ -50,14 +38,14 @@ class CameraWatcher:
         self._interval = interval
         self._task: asyncio.Task | None = None
         self._known_ids: set[int] = set()
-        self._callback: ChangedCallback | None = None
+        self._callback: Callable[[set[int]], None] | None = None
         self._scanner = V4l2Scanner()
 
     @property
     def is_running(self) -> bool:
         return self._task is not None and not self._task.done()
 
-    def start(self, initial_ids: set[int], callback: ChangedCallback) -> None:
+    def start(self, initial_ids: set[int], callback: Callable[[set[int]], None]) -> None:
         if self._task is not None:
             return
         self._known_ids = set(initial_ids)

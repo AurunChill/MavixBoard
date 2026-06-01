@@ -222,7 +222,7 @@ class CrsfController:
     # чтобы дрон не висел на последних стиках при разрыве линка (BF тогда
     # уйдёт в свой штатный RXLOSS-failsafe).
     RC_PUMP_INTERVAL_SECONDS = 0.005
-    RC_FRAME_TIMEOUT_SECONDS = 0.3
+    RC_FRAME_TIMEOUT_SECONDS = 0.6
     RC_FRAME_TYPE = 0x16
 
     def __init__(self, port: str, name: str = 'CRSF FC') -> None:
@@ -310,6 +310,9 @@ class CrsfController:
             elif self._writer is None:
                 logger.warning('[crsf] отправка отброшена (writer не инициализирован)')
             return
+        # data[0] — CRSF device-address (sync-байт начала кадра): 0xC8 — FC,
+        # 0xEE — TX-модуль, 0xEC — приёмник (RX), 0x00 — broadcast. Берём кадр,
+        # только если адрес валидный и это RC-кадр (data[2] == RC_FRAME_TYPE).
         if (len(data) >= 3
                 and data[0] in (0xC8, 0xEE, 0xEC, 0x00)
                 and data[2] == self.RC_FRAME_TYPE):

@@ -82,7 +82,6 @@ src/mavixboard/
 │   ├── logger.py        # Журналирование (консоль + файл)
 │   └── backoff.py       # Экспоненциальная задержка переподключения
 ├── server/
-│   ├── api.py           # HTTP-клиент: /health, /drones/register
 │   └── signal_client.py # WebSocket-клиент к серверу сигнализации
 ├── webrtc/
 │   ├── peer.py          # PeerSession — управление одной WebRTC-сессией
@@ -99,9 +98,6 @@ src/mavixboard/
 │   ├── controllers.py   # Контроллеры FC (Mavlink, CRSF)
 │   ├── detect.py        # Автоопределение типа FC
 │   └── service.py       # FCService — единая точка управления FC
-├── token/
-│   ├── generator.py     # Генерация криптографических токенов
-│   └── storage.py       # Хранение токена в файле
 ├── coordinator.py       # SessionCoordinator — связь signaling/webrtc/fc
 └── __main__.py          # Точка входа
 ```
@@ -113,7 +109,7 @@ src/mavixboard/
 Загружает значения из:
 
 1. `/etc/mavixboard/preset.env` — конфигурация, «впаянная» при сборке
-   `.tar.gz`-архива (содержит `USER_ID`, `DRONE_TOKEN`, `SIGNAL_SERVER_IP`).
+   `.tar.gz`-архива (содержит `DRONE_ID`, `DRONE_TOKEN`, `SIGNAL_SERVER_IP`).
    Загружается без переопределения уже установленных переменных.
 2. Локального `.env` в корне проекта — для разработки.
    Загружается с переопределением.
@@ -282,7 +278,8 @@ cp .env-example .env
 |---|---|---|
 | `SIGNAL_SERVER_IP` | URL сервера сигнализации | `http://localhost` |
 | `SIGNAL_WS_URL` | Полный URL WebSocket (если иной путь) | пусто |
-| `USER_ID` | Идентификатор владельца (32 символа) | пусто |
+| `DRONE_ID` | Идентификатор дрона (выдаётся сервером) | пусто |
+| `DRONE_TOKEN` | Токен дрона для WS-авторизации (выдаётся сервером) | пусто |
 | `STUN_SERVER` | URL STUN-сервера | `stun://localhost:3478` |
 | `TURN_SERVER` | URL TURN-сервера | пусто |
 

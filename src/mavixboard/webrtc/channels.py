@@ -11,18 +11,10 @@ from gi.repository import GLib, Gst, GstWebRTC
 
 from mavixboard.core.logger import logger
 
-PacketHandler = Callable[[bytes], None]
-StringHandler = Callable[[str], None]
-
 
 #### Базовый канал #####################################################################
-def _channel_init(spec: str):
-    structure, _ = Gst.Structure.from_string(spec)
-    return structure
-
-
 class _BaseChannel:
-    def __init__(self, channel, label: str) -> None:
+    def __init__(self, channel: GstWebRTC.WebRTCDataChannel, label: str) -> None:
         self._ch = channel
         self._label = label
         self._open = False
@@ -36,7 +28,7 @@ class _BaseChannel:
     def label(self) -> str:
         return self._label
 
-    def _on_state(self, channel, _pspec) -> None:
+    def _on_state(self, channel: GstWebRTC.WebRTCDataChannel, _pspec: object) -> None:
         state = channel.get_property('ready-state')
         self._open = state == GstWebRTC.WebRTCDataChannelState.OPEN
         nick = getattr(state, 'value_nick', str(state))
@@ -47,6 +39,13 @@ class _BaseChannel:
     def _on_open(self) -> None:
         return
 
+    def _emit(self, data: bytes) -> bool:
+        try:
+            self._ch.emit('send-data', GLib.Bytes.new(data))
+        except Exception as exc:
+            logger.warning('[dc:%s] send error: %s', self._label, exc)
+        return False
+
     def close(self) -> None:
         self._open = False
 
@@ -55,9 +54,9 @@ class _BaseChannel:
 class PacketChannel(_BaseChannel):
     INIT_SPEC = 'application/x-data-channel-init,ordered=true,max-retransmits=2,bitrate=6000000'
 
-    def __init__(self, channel) -> None:
+    def __init__(self, channel: GstWebRTC.WebRTCDataChannel) -> None:
         super().__init__(channel, label='packet')
-        self.on_packet: PacketHandler | None = None
+        self.on_packet: Callable[[bytes], None] | None = None
         channel.connect('on-message-data', self._on_data)
 
     def send_bytes(self, data: bytes) -> None:
@@ -65,14 +64,7 @@ class PacketChannel(_BaseChannel):
             return
         GLib.idle_add(self._emit, data)
 
-    def _emit(self, data: bytes) -> bool:
-        try:
-            self._ch.emit('send-data', GLib.Bytes.new(data))
-        except Exception as exc:
-            logger.warning('[dc:packet] send error: %s', exc)
-        return False
-
-    def _on_data(self, _channel, buf) -> None:
+    def _on_data(self, _channel: GstWebRTC.WebRTCDataChannel, buf: GLib.Bytes | None) -> None:
         if buf is None or self.on_packet is None:
             return
         raw = buf.get_data()
@@ -87,30 +79,23 @@ class PacketChannel(_BaseChannel):
 class PingChannel(_BaseChannel):
     INIT_SPEC = 'application/x-data-channel-init,ordered=true,max-retransmits=2'
 
-    def __init__(self, channel) -> None:
+    def __init__(self, channel: GstWebRTC.WebRTCDataChannel) -> None:
         super().__init__(channel, label='ping')
         channel.connect('on-message-data', self._on_data)
 
-    def _on_data(self, _channel, buf) -> None:
+    def _on_data(self, _channel: GstWebRTC.WebRTCDataChannel, buf: GLib.Bytes | None) -> None:
         if buf is None or not self._open:
             return
         raw = buf.get_data()
         if not raw:
             return
-        GLib.idle_add(self._echo, raw)
-
-    def _echo(self, raw) -> bool:
-        try:
-            self._ch.emit('send-data', GLib.Bytes.new(raw))
-        except Exception as exc:
-            logger.warning('[dc:ping] echo error: %s', exc)
-        return False
+        GLib.idle_add(self._emit, raw)
 
 
 class ConfigChannel(_BaseChannel):
     INIT_SPEC = 'application/x-data-channel-init,ordered=true'
 
-    def __init__(self, channel) -> None:
+    def __init__(self, channel: GstWebRTC.WebRTCDataChannel) -> None:
         super().__init__(channel, label='config')
         self.on_message: Callable[[dict | list], None] | None = None
         self.on_open: Callable[[], None] | None = None
@@ -126,14 +111,7 @@ class ConfigChannel(_BaseChannel):
             return
         GLib.idle_add(self._emit, text.encode('utf-8'))
 
-    def _emit(self, data: bytes) -> bool:
-        try:
-            self._ch.emit('send-data', GLib.Bytes.new(data))
-        except Exception as exc:
-            logger.warning('[dc:config] send error: %s', exc)
-        return False
-
-    def _on_data(self, _channel, buf) -> None:
+    def _on_data(self, _channel: GstWebRTC.WebRTCDataChannel, buf: GLib.Bytes | None) -> None:
         if buf is None or self.on_message is None:
             return
         raw = buf.get_data()
@@ -158,16 +136,20 @@ class ConfigChannel(_BaseChannel):
 
 
 #### Хаб каналов #######################################################################
+def _channel_init(spec: str) -> Gst.Structure:
+    structure, _ = Gst.Structure.from_string(spec)
+    return structure
+
 class DataChannelHub:
     """Создаёт и владеет всеми тремя data-каналами одной сессии пира."""
 
-    def __init__(self, webrtc_elem) -> None:
+    def __init__(self, webrtc_elem: Gst.Element) -> None:
         self.packet = PacketChannel(self._create(webrtc_elem, 'packet-channel', PacketChannel.INIT_SPEC))
         self.ping = PingChannel(self._create(webrtc_elem, 'ping-channel', PingChannel.INIT_SPEC))
         self.config = ConfigChannel(self._create(webrtc_elem, 'config-channel', ConfigChannel.INIT_SPEC))
 
     @staticmethod
-    def _create(webrtc_elem, name: str, init_spec: str):
+    def _create(webrtc_elem: Gst.Element, name: str, init_spec: str) -> GstWebRTC.WebRTCDataChannel:
         init = _channel_init(init_spec)
         channel = webrtc_elem.emit('create-data-channel', name, init)
         if channel is None:

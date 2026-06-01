@@ -10,15 +10,12 @@ from dotenv import load_dotenv
 # Загружаем env в порядке приоритета:
 #   1. /etc/mavixboard/preset.env — устанавливается install.sh на реальном дроне;
 #      содержит USER_ID и любые системные настройки, которые сервер зашил на
-#      этапе сборки. Загружается БЕЗ override, чтобы локальный .env на dev-машине
-#      всё ещё выигрывал по всему, кроме залоченного.
+#      этапе сборки.
 #   2. ./.env (локально в проекте) — переопределение для разработки.
 _PRESET_PATH = Path('/etc/mavixboard/preset.env')
 if _PRESET_PATH.is_file():
     load_dotenv(_PRESET_PATH, override=False)
 load_dotenv(override=True)
-
-_BASE = Path.home() / '.config' / 'mavixboard'
 
 
 #### Разрешение путей ##################################################################
@@ -72,7 +69,6 @@ def _resolve_data_dir() -> Path:
 class Settings:
     signal_server_ip: str = field(default_factory=lambda: os.getenv('SIGNAL_SERVER_IP', 'http://localhost'))
     signal_ws_url: str = field(default_factory=lambda: os.getenv('SIGNAL_WS_URL', ''))
-    user_id: str = field(default_factory=lambda: os.getenv('USER_ID', ''))
     drone_id: str = field(default_factory=lambda: os.getenv('DRONE_ID', ''))
     drone_token: str = field(default_factory=lambda: os.getenv('DRONE_TOKEN', ''))
     stun_server: str = field(default_factory=lambda: os.getenv('STUN_SERVER', 'stun://stun.l.google.com:19302'))
@@ -99,7 +95,6 @@ class Settings:
         default_factory=lambda: os.getenv('FORCE_RELAY', '').strip().lower() in ('1', 'true', 'yes', 'on')
     )
 
-    token_path: Path = _BASE / 'token'
     log_path: Path = field(default_factory=lambda: _resolve_log_dir() / f'mavixboard_{date.today()}.log')
     data_path: Path = field(default_factory=_resolve_data_dir)
 

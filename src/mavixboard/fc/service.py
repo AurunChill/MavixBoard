@@ -9,21 +9,18 @@ from mavixboard.core.logger import logger
 from mavixboard.fc import detect as detect_module
 from mavixboard.fc.controllers import FlightController, PacketCallback
 
-DetectFn = Callable[[], Awaitable[FlightController | None]]
-ChangeCallback = Callable[[str | None, str], None]
-
 
 class FCService:
     def __init__(
         self,
-        detect_fn: DetectFn | None = None,
+        detect_fn: Callable[[], Awaitable[FlightController | None]] | None = None,
         scan_interval: float = 1.0,
     ) -> None:
         self._detect_fn = detect_fn or detect_module.detect
         self._scan_interval = scan_interval
         self._controller: FlightController | None = None
         self._on_packet: PacketCallback | None = None
-        self._on_change: ChangeCallback | None = None
+        self._on_change: Callable[[str | None, str], None] | None = None
         self._on_telemetry: Callable[[dict], None] | None = None
         self._loop_task: asyncio.Task | None = None
         self._stop_event: asyncio.Event | None = None
@@ -46,7 +43,7 @@ class FCService:
         if self._controller is not None:
             self._controller.set_packet_callback(cb)
 
-    def set_change_callback(self, cb: ChangeCallback | None) -> None:
+    def set_change_callback(self, cb: Callable[[str | None, str], None] | None) -> None:
         self._on_change = cb
 
     def set_telemetry_callback(self, cb: Callable[[dict], None] | None) -> None:

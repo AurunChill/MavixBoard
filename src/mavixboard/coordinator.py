@@ -9,29 +9,29 @@ from mavixboard.core.backoff import ExponentialBackoff
 from mavixboard.core.config import settings
 from mavixboard.core.logger import logger
 from mavixboard.fc.service import FCService
-from mavixboard.gstreamer.camera import CameraManager
+from mavixboard.gstreamer.camera import CameraSource, get_default_registry
 from mavixboard.gstreamer.gstreamer import GStreamerPipe
 from mavixboard.gstreamer.watcher import CameraWatcher
 from mavixboard.server.signal_client import SignalClient
 from mavixboard.webrtc.manager import WebRTCManager
-
-PipelineFactory = Callable[[], GStreamerPipe | None]
 
 
 class SessionCoordinator:
     def __init__(
         self,
         signal_client: SignalClient,
-        pipeline_factory: PipelineFactory,
+        pipeline_factory: Callable[[], GStreamerPipe | None],
         fc_service: FCService | None = None,
         watcher: CameraWatcher | None = None,
         backoff: ExponentialBackoff | None = None,
+        camera_source: CameraSource | None = None,
     ) -> None:
         self._signal_client = signal_client
         self._pipeline_factory = pipeline_factory
         self._fc_service = fc_service
         self._watcher = watcher
         self._backoff = backoff if backoff is not None else ExponentialBackoff()
+        self._cameras: CameraSource = camera_source if camera_source is not None else get_default_registry()
         self._loop: asyncio.AbstractEventLoop | None = None
         self._pipeline: GStreamerPipe | None = None
         self._manager: WebRTCManager | None = None
@@ -83,6 +83,7 @@ class SessionCoordinator:
             self._pipeline = None
         if self._fc_service is not None:
             self._fc_service.set_change_callback(None)
+            self._fc_service.set_telemetry_callback(None)
 
     #### Колбэки FC ########################################################################
     def _on_fc_change(self, kind: str | None, name: str) -> None:
@@ -168,18 +169,9 @@ class SessionCoordinator:
         if self._pipeline is not None:
             logger.info('[coord] активна предыдущая сессия, завершаем перед новой')
             self._teardown()
-        # pipeline_factory может крутить многосекундный цикл калибровки
-        # GStreamer; pipeline.start блокируется на get_state(PLAYING). Оба
-        # синхронны и НЕ должны выполняться прямо в asyncio loop — иначе
-        # _pump_offer не отправит SDP, а signal_client.listen не подтвердит
-        # ping, и сервер выкинет WS дрона по WS_PING_TIMEOUT (45s), решив, что
-        # дрон умер. Запускаем их через asyncio.to_thread, чтобы не занимать loop.
         pipeline = await asyncio.to_thread(self._pipeline_factory)
         if pipeline is None or pipeline.webrtc_elem is None:
             logger.error('[coord] фабрика пайплайна не вернула пайплайн, прерываем сессию')
-            # Нет камер / пайплайн сломан: просим сервер сбросить пару пиров,
-            # чтобы GCS быстро получил drone_disconnected, а не ждал SDP, который
-            # никогда не придёт до таймаута WS-ping.
             try:
                 await self._signal_client.send({'type': 'disconnect_session'})
             except Exception as exc:
@@ -194,13 +186,6 @@ class SessionCoordinator:
             self._signal_client.send,
             fc_service=self._fc_service,
         )
-        # Ждём, пока пайплайн реально перейдёт в PLAYING, прежде чем создавать
-        # data-каналы. Если v4l2_open падает (камеру выдернули между сканом и
-        # pipeline.start, /dev/videoN ещё не готов после udev), шина шлёт ERROR,
-        # который планирует _on_pipeline_error в потоке GLib. Запуск этого
-        # параллельно с manager.start_session уронил бы
-        # `gst_webrtc_bin_create_data_channel: is_closed != TRUE`, потому что
-        # webrtcbin сносится во время создания каналов.
         if not await asyncio.to_thread(pipeline.start):
             logger.error('[coord] пайплайн не достиг PLAYING, прерываем сессию')
             try:
@@ -209,21 +194,13 @@ class SessionCoordinator:
                 logger.debug('[coord] ошибка остановки пайплайна после неудачного старта: %s', exc)
             self._pipeline = None
             self._manager = None
-            CameraManager.clear_cache()
+            self._cameras.clear_cache()
             return
         self._manager.start_session(gcs_id, cameras=pipeline.cameras)
         if self._manager.channels is not None:
             self._manager.channels.config.on_message = self._on_config_message
         if self._fc_service is not None:
-            # FCService срабатывает каждый раз, когда FC-контроллер появляется
-            # или исчезает посреди сессии (например, пользователь подключил FC
-            # уже после поднятия WebRTC-сессии). manager._send_fc_info
-            # выполняется лишь раз при открытии data-канала — без повторного
-            # вызова здесь GCS никогда не узнал бы о горячем подключении FC.
             self._fc_service.set_change_callback(self._on_fc_change)
-            # Декодированные кадры телеметрии (battery / attitude / flight_mode)
-            # — координатор выбирает те, что нужны UI, и пробрасывает компактным
-            # JSON через config data-канал.
             self._fc_service.set_telemetry_callback(self._on_fc_telemetry)
         if self._watcher is not None:
             initial_ids = {cam.device_index for cam in pipeline.cameras}
@@ -342,7 +319,7 @@ class SessionCoordinator:
         logger.info('[coord] запрошена полная перекалибровка через config-канал')
         cameras = list(self._pipeline.cameras) if self._pipeline is not None else []
         if not cameras:
-            cameras = CameraManager.get_cameras()
+            cameras = self._cameras.get_cameras()
         for cam in cameras:
             path = settings.data_path / f'{cam.name}.json'
             try:
@@ -350,7 +327,7 @@ class SessionCoordinator:
                 logger.info('[coord] удалена сохранённая калибровка: %s', path)
             except OSError as exc:
                 logger.warning('[coord] не удалось удалить %s: %s', path, exc)
-        CameraManager.clear_cache()
+        self._cameras.clear_cache()
         if self._manager is None:
             return
         assert self._loop is not None
@@ -363,7 +340,7 @@ class SessionCoordinator:
     #### События камер и пайплайна #########################################################
     def _on_cameras_changed(self, new_ids: set[int]) -> None:
         logger.info('[coord] набор камер изменился: %s, завершаем сессию', sorted(new_ids))
-        CameraManager.clear_cache()
+        self._cameras.clear_cache()
         if self._manager is None:
             return
         assert self._loop is not None
@@ -376,26 +353,15 @@ class SessionCoordinator:
     def _on_pipeline_error(self) -> None:
         """Вызывается bus watch у GStreamerPipe, когда пайплайн шлёт ERROR.
 
-        Сначала отправляет уведомление об ошибке в GCS через config-канал,
-        чтобы UI мог сообщить пилоту, затем полностью сбрасывает сессию пира.
-        Новый пайплайн соберётся при переподключении GCS (сервер снова шлёт
-        'connect').
+        Полностью сбрасывает сессию пира. Новый пайплайн соберётся при
+        переподключении GCS (сервер снова шлёт 'connect').
         """
         logger.warning('[coord] ошибка пайплайна, завершаем сессию')
         # На практике самая частая ошибка пайплайна — падение чтения v4l2
-        # из-за того, что камеру выдернули. Сбрасываем in-memory кэш камер,
-        # чтобы пересборка после авто-переподключения заново просканировала
-        # /dev/video* и пропустила отсутствующее устройство — иначе
-        # force_update=False вернёт устаревший кэш, и пайплайн снова упадёт в
-        # тесном цикле.
-        CameraManager.clear_cache()
+        # из-за того, что камеру выдернули
+        self._cameras.clear_cache()
         if self._manager is None:
             return
-        if self._manager.channels is not None and self._manager.channels.config is not None:
-            self._manager.channels.config.send_json({
-                'type': 'error',
-                'message': 'pipeline_error',
-            })
         assert self._loop is not None
         asyncio.run_coroutine_threadsafe(
             self._signal_client.send({'type': 'disconnect_session'}),
