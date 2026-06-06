@@ -10,6 +10,7 @@ from mavixboard.webrtc.channels import (
     DataChannelHub,
     PacketChannel,
     PingChannel,
+    TelemetryChannel,
 )
 
 
@@ -31,7 +32,8 @@ def _make_channel_mock(open_state: bool = False) -> MagicMock:
     return ch
 
 
-def _trigger_state(channel: PacketChannel | PingChannel | ConfigChannel, ch_mock: MagicMock, open_state: bool):
+def _trigger_state(channel: PacketChannel | PingChannel | ConfigChannel | TelemetryChannel,
+                   ch_mock: MagicMock, open_state: bool):
     state = MagicMock(name='state2')
     state.value_nick = 'open' if open_state else 'closed'
     state.__eq__ = lambda self, other: other == 'OPEN' and open_state
@@ -275,6 +277,46 @@ def test_config_on_open_does_not_fire_when_closed():
     assert opens == []
 
 
+#### TelemetryChannel ##################################################################
+def test_telemetry_send_json_when_closed_is_noop(immediate_glib_bytes):
+    ch = _make_channel_mock()
+    tc = TelemetryChannel(ch)
+    tc.send_json({'type': 'telemetry'})
+    ch.emit.assert_not_called()
+
+
+def test_telemetry_send_json_when_open_encodes_utf8(immediate_glib_bytes):
+    ch = _make_channel_mock()
+    tc = TelemetryChannel(ch)
+    _trigger_state(tc, ch, True)
+    tc.send_json({'type': 'telemetry', 'lat': 55.7, 'lon': 37.6})
+    args = ch.emit.call_args.args
+    assert args[0] == 'send-data'
+    assert json.loads(args[1].decode('utf-8')) == {'type': 'telemetry', 'lat': 55.7, 'lon': 37.6}
+
+
+def test_telemetry_send_json_unencodable_does_not_raise(immediate_glib_bytes):
+    ch = _make_channel_mock()
+    tc = TelemetryChannel(ch)
+    _trigger_state(tc, ch, True)
+
+    class _Bad:
+        pass
+
+    tc.send_json({'x': _Bad()})  # should not raise
+
+
+def test_telemetry_is_send_only_no_message_signal():
+    ch = _make_channel_mock()
+    TelemetryChannel(ch)
+    signals = [c.args[0] for c in ch.connect.call_args_list]
+    assert 'notify::ready-state' in signals
+    assert 'on-message-data' not in signals
+    assert TelemetryChannel.INIT_SPEC == (
+        'application/x-data-channel-init,ordered=false,max-retransmits=0'
+    )
+
+
 #### DataChannelHub ####################################################################
 def test_hub_creates_three_channels():
     webrtc = MagicMock()
@@ -289,10 +331,11 @@ def test_hub_creates_three_channels():
     webrtc.emit.side_effect = emit_create
 
     hub = DataChannelHub(webrtc)
-    assert counter['n'] == 3
+    assert counter['n'] == 4
     assert isinstance(hub.packet, PacketChannel)
     assert isinstance(hub.ping, PingChannel)
     assert isinstance(hub.config, ConfigChannel)
+    assert isinstance(hub.telemetry, TelemetryChannel)
 
 
 def test_hub_raises_when_channel_creation_fails():
@@ -307,7 +350,7 @@ def test_hub_close_marks_all_channels_closed():
     webrtc.emit.side_effect = lambda *a, **kw: _make_channel_mock()
     hub = DataChannelHub(webrtc)
     # Force all open first
-    for ch in (hub.packet, hub.ping, hub.config):
+    for ch in (hub.packet, hub.ping, hub.config, hub.telemetry):
         _trigger_state(ch, ch._ch, True)
         assert ch.is_open is True
 
@@ -315,3 +358,4 @@ def test_hub_close_marks_all_channels_closed():
     assert hub.packet.is_open is False
     assert hub.ping.is_open is False
     assert hub.config.is_open is False
+    assert hub.telemetry.is_open is False

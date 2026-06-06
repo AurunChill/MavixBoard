@@ -1,14 +1,26 @@
+from unittest.mock import MagicMock
+
 from mavixboard.fc.mavlink import (
     IMPORTANT_MSGS,
     MAV_AUTOPILOT,
     MAV_TYPE,
+    MSG_GLOBAL_POSITION_INT,
     MSG_HEARTBEAT,
     MSG_PARAM_REQUEST_LIST,
     MSG_PARAM_REQUEST_READ,
     MSG_PARAM_VALUE,
+    decode_global_position,
     parse_msg_id,
     should_throttle_msg,
 )
+
+
+def _make_msg(msg_id: int, **attrs: object) -> MagicMock:
+    msg = MagicMock()
+    msg.get_msgId.return_value = msg_id
+    for name, value in attrs.items():
+        setattr(msg, name, value)
+    return msg
 
 
 #### parse_msg_id ######################################################################
@@ -69,6 +81,38 @@ def test_mav_autopilot_known_ids():
 def test_mav_type_known_ids():
     assert MAV_TYPE[2] == 'quadrotor'
     assert MAV_TYPE[13] == 'hexarotor'
+
+
+#### decode_global_position ############################################################
+def test_decode_global_position():
+    msg = _make_msg(
+        MSG_GLOBAL_POSITION_INT,
+        lat=557558000, lon=376173000, alt=150000, hdg=8950,
+    )
+    decoded = decode_global_position(msg)
+    assert decoded is not None
+    assert decoded['type'] == 'gps'
+    assert decoded['lat'] == 55.7558
+    assert decoded['lon'] == 37.6173
+    assert decoded['alt'] == 150.0
+    assert decoded['heading'] == 89.5
+    assert decoded['sats'] == 0
+
+
+def test_decode_global_position_unknown_heading_is_zero():
+    msg = _make_msg(MSG_GLOBAL_POSITION_INT, lat=0, lon=0, alt=0, hdg=65535)
+    decoded = decode_global_position(msg)
+    assert decoded is not None
+    assert decoded['heading'] == 0.0
+
+
+def test_decode_global_position_wrong_msg_returns_none():
+    assert decode_global_position(_make_msg(MSG_HEARTBEAT)) is None
+
+
+def test_decode_global_position_no_msgid_returns_none():
+    bad = object()
+    assert decode_global_position(bad) is None
 
 
 #### should_throttle_msg ###############################################################

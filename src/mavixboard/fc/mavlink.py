@@ -13,6 +13,14 @@ MSG_PARAM_REQUEST_READ = 20
 MSG_COMMAND_ACK = 77
 MSG_BATTERY_STATUS = 147
 MSG_STATUSTEXT = 253
+MSG_GLOBAL_POSITION_INT = 33
+
+# GLOBAL_POSITION_INT: координаты в градусах ×1e7, высота в мм,
+# hdg — курс в сотых долях градуса, 65535 = «неизвестно».
+GLOBAL_POS_COORD_SCALE = 1e7
+GLOBAL_POS_ALT_SCALE = 1000.0
+GLOBAL_POS_HDG_SCALE = 100.0
+GLOBAL_POS_HDG_UNKNOWN = 65535
 
 # Размер таблицы счётчиков троттлинга = диапазон MAVLink msgid (msgid >= MAX_MSG_ID
 # не троттлим/не шлём). Для неважных сообщений пропускаем 1 из THROTTLE_RATIO.
@@ -163,6 +171,34 @@ def decode_battery(msg: object) -> dict | None:
             'remaining': rem if rem != -1 else 0,
         }
     return None
+
+
+def decode_global_position(msg: object) -> dict | None:
+    """GLOBAL_POSITION_INT (msgid 33) — слитая позиция (GPS + барометр).
+
+    Отдаёт единый словарь {'type':'gps', lat, lon, alt, heading, sats},
+    совпадающий по форме с GPS-кадром CRSF, чтобы координатору было всё
+    равно, от какого полётника пришли данные. Число спутников это
+    сообщение не несёт, поэтому sats=0.
+    """
+    try:
+        msg_id = msg.get_msgId()
+    except AttributeError:
+        return None
+    if msg_id != MSG_GLOBAL_POSITION_INT:
+        return None
+    lat = int(getattr(msg, 'lat', 0))
+    lon = int(getattr(msg, 'lon', 0))
+    alt = int(getattr(msg, 'alt', 0))
+    hdg = int(getattr(msg, 'hdg', GLOBAL_POS_HDG_UNKNOWN))
+    return {
+        'type': 'gps',
+        'lat': lat / GLOBAL_POS_COORD_SCALE,
+        'lon': lon / GLOBAL_POS_COORD_SCALE,
+        'alt': alt / GLOBAL_POS_ALT_SCALE,
+        'heading': hdg / GLOBAL_POS_HDG_SCALE if hdg != GLOBAL_POS_HDG_UNKNOWN else 0.0,
+        'sats': 0,
+    }
 
 
 #### Таблицы и разбор ##################################################################
