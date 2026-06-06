@@ -18,6 +18,7 @@ from mavixboard.fc.service import FCService
 from mavixboard.gstreamer.camera import get_default_registry
 from mavixboard.gstreamer.gstreamer import GStreamerPipe
 from mavixboard.gstreamer.watcher import CameraWatcher
+from mavixboard.server.enroll import ensure_enrolled
 from mavixboard.server.signal_client import SignalClient
 
 
@@ -42,21 +43,24 @@ def _build_pipeline() -> GStreamerPipe | None:
     return GStreamerPipe(cameras)
 
 
-def _resolve_drone_token() -> str:
+async def _resolve_drone_token() -> str:
     """Возвращает DRONE_TOKEN для WS-авторизации.
 
-    Токен выпускает сервер при регистрации дрона (через пользовательский
-    флоу) и прокидывает в board: в production — через preset.env, в dev —
-    через .env. Если он не задан, стартовать бессмысленно — падаем с
-    понятной ошибкой.
+    Если DRONE_TOKEN ещё не выдан (первый запуск), board сам регистрируется
+    по ADMIN_ID + ENROLLMENT_TOKEN, получает токен/имя и дописывает их в
+    env-файл. Дальнейшие запуски используют сохранённый токен.
     """
-    if not settings.drone_token:
-        raise RuntimeError(
-            'DRONE_TOKEN не задан: зарегистрируйте дрон и пропишите его токен '
-            'в preset.env (production) или .env (dev)'
-        )
-    logger.info('[app] используется DRONE_TOKEN (drone_id=%s)', settings.drone_id or '<unset>')
-    return settings.drone_token
+    drone_id, token, name = await ensure_enrolled(
+        base_url=settings.signal_server_ip,
+        admin_id=settings.admin_id,
+        enrollment_token=settings.enrollment_token,
+        drone_id=settings.drone_id,
+        drone_token=settings.drone_token,
+        drone_name=settings.drone_name,
+        env_path=settings.identity_env_path,
+    )
+    logger.info('[app] drone_id=%s name=%s', drone_id, name or '<unset>')
+    return token
 
 
 #### Точка входа #######################################################################
@@ -69,7 +73,7 @@ async def main() -> None:
     glib = GLibMainLoopThread()
     glib.start()
 
-    token = _resolve_drone_token()
+    token = await _resolve_drone_token()
 
     fc_service = FCService()
     await fc_service.start()
