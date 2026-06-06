@@ -80,7 +80,7 @@ async def test_manager_creates_channels_on_start_session():
     mgr.start_session('gcs-1')
 
     assert mgr.channels is not None
-    assert len(webrtc._channels) == 3
+    assert len(webrtc._channels) == 4
     mgr.end_session()
 
 

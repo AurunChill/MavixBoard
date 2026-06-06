@@ -1,4 +1,6 @@
-from mavixboard.fc.crsf import BAUDRATE, CRSF
+import math
+
+from mavixboard.fc.crsf import BAUDRATE, CRSF, FRAME_ATTITUDE, FRAME_GPS
 
 
 #### crc8 ##############################################################################
@@ -131,6 +133,76 @@ def test_decode_device_info():
     payload = b'\x00\x00Pixhawk\x00trailing'
     decoded = CRSF.decode_telemetry(0x29, payload)
     assert decoded == {'type': 'device_info', 'name': 'Pixhawk'}
+
+
+def test_decode_gps():
+    # lat=55.7558° -> 557558000; lon=37.6173° -> 376173000;
+    # ground_speed=123; heading=89.5° -> 8950; altitude=150 м -> 1150; sats=11
+    payload = (
+        (557558000).to_bytes(4, 'big', signed=True)
+        + (376173000).to_bytes(4, 'big', signed=True)
+        + (123).to_bytes(2, 'big')
+        + (8950).to_bytes(2, 'big')
+        + (1150).to_bytes(2, 'big')
+        + bytes([11])
+    )
+    decoded = CRSF.decode_telemetry(FRAME_GPS, payload)
+    assert decoded is not None
+    assert decoded['type'] == 'gps'
+    assert decoded['lat'] == 55.7558
+    assert decoded['lon'] == 37.6173
+    assert decoded['alt'] == 150
+    assert decoded['heading'] == 89.5
+    assert decoded['sats'] == 11
+
+
+def test_decode_gps_negative_coords():
+    payload = (
+        (-337680000).to_bytes(4, 'big', signed=True)
+        + (-700000000).to_bytes(4, 'big', signed=True)
+        + (0).to_bytes(2, 'big')
+        + (0).to_bytes(2, 'big')
+        + (1000).to_bytes(2, 'big')
+        + bytes([0])
+    )
+    decoded = CRSF.decode_telemetry(FRAME_GPS, payload)
+    assert decoded is not None
+    assert decoded['lat'] == -33.768
+    assert decoded['lon'] == -70.0
+    assert decoded['alt'] == 0
+
+
+def test_decode_gps_short_payload_returns_none():
+    assert CRSF.decode_telemetry(FRAME_GPS, b'\x00' * 14) is None
+
+
+def test_decode_attitude():
+    # yaw = 1.5708 рад (~90°) -> 15708
+    payload = (
+        (0).to_bytes(2, 'big', signed=True)
+        + (0).to_bytes(2, 'big', signed=True)
+        + (15708).to_bytes(2, 'big', signed=True)
+    )
+    decoded = CRSF.decode_telemetry(FRAME_ATTITUDE, payload)
+    assert decoded is not None
+    assert decoded['type'] == 'attitude'
+    assert math.isclose(decoded['heading'], 90.0, abs_tol=0.01)
+
+
+def test_decode_attitude_negative_yaw_wraps_to_360():
+    # yaw = -1.5708 рад (~-90°) -> heading 270°
+    payload = (
+        (0).to_bytes(2, 'big', signed=True)
+        + (0).to_bytes(2, 'big', signed=True)
+        + (-15708).to_bytes(2, 'big', signed=True)
+    )
+    decoded = CRSF.decode_telemetry(FRAME_ATTITUDE, payload)
+    assert decoded is not None
+    assert math.isclose(decoded['heading'], 270.0, abs_tol=0.01)
+
+
+def test_decode_attitude_short_payload_returns_none():
+    assert CRSF.decode_telemetry(FRAME_ATTITUDE, b'\x00' * 5) is None
 
 
 def test_decode_unknown_type_returns_none():
