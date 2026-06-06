@@ -135,6 +135,29 @@ class ConfigChannel(_BaseChannel):
                 logger.warning('[dc:config] on_open error: %s', exc)
 
 
+class TelemetryChannel(_BaseChannel):
+    """Высокочастотный send-only канал борт→оператор для GPS/курса.
+
+    Поток лоссы-ок (ordered=false, max-retransmits=0): свежий фикс важнее
+    гарантии доставки старого. Приёма нет — оператор только слушает.
+    """
+
+    INIT_SPEC = 'application/x-data-channel-init,ordered=false,max-retransmits=0'
+
+    def __init__(self, channel: GstWebRTC.WebRTCDataChannel) -> None:
+        super().__init__(channel, label='telemetry')
+
+    def send_json(self, payload: dict) -> None:
+        if not self._open:
+            return
+        try:
+            text = json.dumps(payload)
+        except (TypeError, ValueError) as exc:
+            logger.warning('[dc:telemetry] encode error: %s', exc)
+            return
+        GLib.idle_add(self._emit, text.encode('utf-8'))
+
+
 #### Хаб каналов #######################################################################
 def _channel_init(spec: str) -> Gst.Structure:
     structure, _ = Gst.Structure.from_string(spec)
@@ -147,6 +170,7 @@ class DataChannelHub:
         self.packet = PacketChannel(self._create(webrtc_elem, 'packet-channel', PacketChannel.INIT_SPEC))
         self.ping = PingChannel(self._create(webrtc_elem, 'ping-channel', PingChannel.INIT_SPEC))
         self.config = ConfigChannel(self._create(webrtc_elem, 'config-channel', ConfigChannel.INIT_SPEC))
+        self.telemetry = TelemetryChannel(self._create(webrtc_elem, 'telemetry-channel', TelemetryChannel.INIT_SPEC))
 
     @staticmethod
     def _create(webrtc_elem: Gst.Element, name: str, init_spec: str) -> GstWebRTC.WebRTCDataChannel:
@@ -160,3 +184,4 @@ class DataChannelHub:
         self.packet.close()
         self.ping.close()
         self.config.close()
+        self.telemetry.close()

@@ -33,6 +33,58 @@ def _make_pipeline_mock() -> MagicMock:
     return pipeline
 
 
+#### _on_fc_telemetry / telemetry-канал ################################################
+def _coord_with_fake_channels() -> tuple[SessionCoordinator, MagicMock]:
+    coord = SessionCoordinator(_make_signal_client(), MagicMock())
+    manager = MagicMock(name='manager')
+    channels = MagicMock(name='channels')
+    channels.telemetry = MagicMock(name='telemetry')
+    channels.config = MagicMock(name='config')
+    manager.channels = channels
+    coord._manager = manager
+    return coord, channels
+
+
+async def test_on_fc_telemetry_gps_and_attitude_merged_to_telemetry():
+    coord, channels = _coord_with_fake_channels()
+
+    coord._on_fc_telemetry({'type': 'gps', 'lat': 55.7, 'lon': 37.6, 'alt': 150.0,
+                            'heading': 0.0, 'sats': 9})
+    coord._on_fc_telemetry({'type': 'attitude', 'heading': 123.0})
+
+    # GPS пришёл первым -> уже отправили telemetry; attitude обновил heading.
+    assert channels.telemetry.send_json.call_count == 2
+    last = channels.telemetry.send_json.call_args.args[0]
+    assert last == {'type': 'telemetry', 'lat': 55.7, 'lon': 37.6, 'alt': 150.0,
+                    'heading': 123.0, 'sats': 9}
+    # battery/config не задействован для gps/attitude.
+    channels.config.send_json.assert_not_called()
+
+
+async def test_on_fc_telemetry_gps_heading_not_overwritten_by_zero():
+    coord, channels = _coord_with_fake_channels()
+    coord._on_fc_telemetry({'type': 'attitude', 'heading': 200.0})
+    # attitude без lat/lon ничего не шлёт
+    channels.telemetry.send_json.assert_not_called()
+    coord._on_fc_telemetry({'type': 'gps', 'lat': 1.0, 'lon': 2.0, 'alt': 0.0,
+                            'heading': 0.0, 'sats': 5})
+    sent = channels.telemetry.send_json.call_args.args[0]
+    # GPS-курс 0.0 не затёр heading из attitude.
+    assert sent['heading'] == 200.0
+    assert sent['lat'] == 1.0
+
+
+async def test_on_fc_telemetry_no_telemetry_channel_is_silent():
+    coord = SessionCoordinator(_make_signal_client(), MagicMock())
+    manager = MagicMock(name='manager')
+    channels = MagicMock(name='channels')
+    channels.telemetry = None
+    manager.channels = channels
+    coord._manager = manager
+    # Не должно бросать исключение.
+    coord._on_fc_telemetry({'type': 'gps', 'lat': 1.0, 'lon': 2.0, 'sats': 3})
+
+
 async def test_handle_connect_with_invalid_gcs_id_does_nothing():
     sc = _make_signal_client()
     factory = MagicMock()

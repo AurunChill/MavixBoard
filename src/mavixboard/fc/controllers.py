@@ -18,6 +18,7 @@ from mavixboard.fc.mavlink import (
     MSG_HEARTBEAT,
     decode_battery,
     decode_command_ack,
+    decode_global_position,
     decode_heartbeat_armed,
     decode_statustext,
     parse_msg_id,
@@ -171,6 +172,14 @@ class MavlinkController:
                         self._on_telemetry(battery)
                     except Exception as exc:
                         logger.warning('[mavlink] ошибка telemetry-колбэка: %s', exc)
+                # GLOBAL_POSITION_INT (33) — слитая позиция: уходит оператору
+                # по выделенному telemetry-каналу. Декодируем до throttle-гейта.
+                pos = decode_global_position(msg)
+                if pos is not None and self._on_telemetry is not None:
+                    try:
+                        self._on_telemetry(pos)
+                    except Exception as exc:
+                        logger.warning('[mavlink] ошибка gps-колбэка: %s', exc)
                 # COMMAND_ACK — ответ на каждый отправленный нами
                 # COMMAND_LONG (SET_MODE / ARM_DISARM). Логируется на борту
                 # И форвардится в GCS, чтобы оператор видел причины отказа.
