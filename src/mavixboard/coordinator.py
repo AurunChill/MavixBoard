@@ -36,6 +36,9 @@ class SessionCoordinator:
         self._pipeline: GStreamerPipe | None = None
         self._manager: WebRTCManager | None = None
         self._stop_event: asyncio.Event | None = None
+        # Накопитель GPS/курса: GPS-кадры и ATTITUDE приходят разными
+        # сообщениями, объединяем их в одно telemetry-сообщение оператору.
+        self._last_telemetry: dict = {}
 
     #### Жизненный цикл ####################################################################
     async def run(self) -> None:
@@ -107,10 +110,13 @@ class SessionCoordinator:
         """
         if self._manager is None or self._manager.channels is None:
             return
+        kind = decoded.get('type')
+        if kind in ('gps', 'attitude'):
+            self._forward_telemetry(decoded)
+            return
         cfg = self._manager.channels.config
         if cfg is None:
             return
-        kind = decoded.get('type')
         if kind == 'battery':
             try:
                 cfg.send_json({
@@ -139,6 +145,43 @@ class SessionCoordinator:
                 })
             except Exception as exc:
                 logger.debug('[coord] ошибка проброса fc_armed: %s', exc)
+
+    def _forward_telemetry(self, decoded: dict) -> None:
+        """Объединяет GPS- и ATTITUDE-кадры и шлёт их по telemetry-каналу.
+
+        GPS даёт координаты, высоту, спутники и (если есть) курс из вектора
+        движения; ATTITUDE даёт курс из yaw гироскопа. Курс из ATTITUDE
+        обновляем всегда, а GPS-курс не затираем нулём.
+        """
+        if self._manager is None or self._manager.channels is None:
+            return
+        tel = getattr(self._manager.channels, 'telemetry', None)
+        if tel is None:
+            return
+        kind = decoded.get('type')
+        try:
+            if kind == 'gps':
+                self._last_telemetry['lat'] = float(decoded.get('lat', 0.0))
+                self._last_telemetry['lon'] = float(decoded.get('lon', 0.0))
+                self._last_telemetry['alt'] = float(decoded.get('alt', 0.0))
+                self._last_telemetry['sats'] = int(decoded.get('sats', 0))
+                heading = float(decoded.get('heading', 0.0))
+                if heading:
+                    self._last_telemetry['heading'] = heading
+            elif kind == 'attitude':
+                self._last_telemetry['heading'] = float(decoded.get('heading', 0.0))
+            if 'lat' not in self._last_telemetry or 'lon' not in self._last_telemetry:
+                return
+            tel.send_json({
+                'type': 'telemetry',
+                'lat': self._last_telemetry['lat'],
+                'lon': self._last_telemetry['lon'],
+                'alt': self._last_telemetry.get('alt', 0.0),
+                'heading': self._last_telemetry.get('heading', 0.0),
+                'sats': self._last_telemetry.get('sats', 0),
+            })
+        except Exception as exc:
+            logger.debug('[coord] ошибка проброса telemetry: %s', exc)
 
     #### Диспетчеризация сигналинга ########################################################
     async def _on_message(self, msg: dict) -> None:
