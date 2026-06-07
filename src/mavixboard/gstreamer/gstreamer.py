@@ -22,11 +22,55 @@ class GStreamerPipe:
             pipeline_description=PipelineBuilder.build_pipeline_description(cameras)
         )
         self.webrtc_elem: Gst.Element | None = self.pipeline.get_by_name('webrtc')
+        if self.webrtc_elem is not None:
+            self._disable_upnp(self.webrtc_elem)
         self.on_playing: Callable[[], bool] | None = None
         self.on_error: Callable[[], None] | None = None
         self._bus: Gst.Bus = self.pipeline.get_bus()
         self._bus.add_watch(GLib.PRIORITY_DEFAULT, self.on_bus_message, self)
         self._stopped: bool = False
+
+    @staticmethod
+    def _disable_upnp(webrtc: Gst.Element) -> None:
+        """Отключает UPnP (gupnp-igd) в ICE-агенте libnice внутри webrtcbin.
+
+        ПОЧЕМУ это критично: при разборке пайплавна финальный unref webrtcbin
+        освобождает ICE-агента libnice, чей финализатор gupnp-igd встаёт в
+        `g_cond_wait` БЕЗ таймаута, ожидая снятия UPnP-проброса портов с
+        роутера. Если роутер не отвечает (или UPnP-шлюза нет) — поток виснет
+        навсегда, а вместе с ним event-loop, на котором сработал сборщик мусора
+        (подтверждено py-spy дампом зависшего board).
+
+        UPnP-проброс портов нам не нужен — связь идёт через STUN/TURN
+        (см. PipelineBuilder), поэтому отключение безопасно и снимает дедлок
+        у корня. Делаем best-effort по нескольким путям, т.к. набор свойств
+        зависит от версии GStreamer/libnice; неудача не фатальна (на этот
+        случай teardown дополнительно изолирован в отдельном потоке).
+        """
+        try:
+            ice = webrtc.get_property('ice')
+        except Exception:
+            ice = None
+        for obj, label in ((ice, 'GstWebRTCICE'), (webrtc, 'webrtcbin')):
+            if obj is None:
+                continue
+            try:
+                obj.set_property('upnp', False)
+                logger.info('[ice] UPnP отключён (%s)', label)
+                return
+            except Exception:
+                pass
+        # Последняя попытка — добраться до самого NiceAgent.
+        try:
+            agent = ice.get_property('agent') if ice is not None else None
+            if agent is not None:
+                agent.set_property('upnp', False)
+                logger.info('[ice] UPnP отключён (NiceAgent)')
+                return
+        except Exception:
+            pass
+        logger.warning('[ice] не удалось отключить UPnP через свойства — '
+                       'полагаемся на изоляцию teardown в отдельном потоке')
 
     #### Жизненный цикл пайплайна ##########################################################
     def start(self, timeout_seconds: float = 3.0) -> bool:

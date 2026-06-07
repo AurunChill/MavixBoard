@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 from collections.abc import Callable
 
 import websockets
@@ -78,15 +79,42 @@ class SessionCoordinator:
         if self._manager is not None:
             self._manager.end_session()
             self._manager = None
-        if self._pipeline is not None:
+        pipeline = self._pipeline
+        self._pipeline = None
+        if pipeline is not None:
+            # stop() = set_state(NULL): освобождает v4l2-fd, отрабатывает
+            # быстро и синхронно — следующая сборка пайплайна сразу получит
+            # камеру.
             try:
-                self._pipeline.stop()
+                pipeline.stop()
             except Exception as exc:
                 logger.warning('[coord] ошибка остановки пайплайна: %s', exc)
-            self._pipeline = None
+            # Финальный unref webrtcbin (разборка ICE-агента libnice) может
+            # заблокироваться в gupnp-igd, если UPnP отключить не удалось. Чтобы
+            # возможная блокировка НЕ повесила event-loop board, роняем
+            # GObject-ссылки в отдельном daemon-потоке — там же отработает и
+            # сборщик мусора обёртки. См. GStreamerPipe._disable_upnp.
+            threading.Thread(
+                target=self._release_pipeline, args=(pipeline,),
+                name='pipeline-release', daemon=True,
+            ).start()
         if self._fc_service is not None:
             self._fc_service.set_change_callback(None)
             self._fc_service.set_telemetry_callback(None)
+
+    @staticmethod
+    def _release_pipeline(pipeline: GStreamerPipe) -> None:
+        """Роняет GObject-ссылки пайплайна вне потока asyncio-loop.
+
+        Обнуление .pipeline/.webrtc_elem снимает последние Python-ссылки на
+        GStreamer-элементы → их финальный unref происходит в этом одноразовом
+        потоке, а не на event-loop. При отключённом UPnP отрабатывает мгновенно.
+        """
+        try:
+            pipeline.webrtc_elem = None
+            pipeline.pipeline = None  # type: ignore[assignment]
+        except Exception as exc:
+            logger.debug('[coord] release_pipeline: %s', exc)
 
     #### Колбэки FC ########################################################################
     def _on_fc_change(self, kind: str | None, name: str) -> None:
