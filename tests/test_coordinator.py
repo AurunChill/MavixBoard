@@ -74,6 +74,21 @@ async def test_on_fc_telemetry_gps_heading_not_overwritten_by_zero():
     assert sent['lat'] == 1.0
 
 
+async def test_on_fc_telemetry_gps_without_fix_not_forwarded():
+    """GPS без фикса (нулевые координаты) не должен пробрасываться как позиция —
+    иначе дрон «появится» в Null Island (0°,0°)."""
+    coord, channels = _coord_with_fake_channels()
+    # MAVLink до фикса шлёт lat=lon=0 и sats=0 — не отправляем телеметрию.
+    coord._on_fc_telemetry({'type': 'gps', 'lat': 0.0, 'lon': 0.0, 'alt': 0.0,
+                            'heading': 0.0, 'sats': 0})
+    channels.telemetry.send_json.assert_not_called()
+    # Появился реальный фикс — позиция уходит.
+    coord._on_fc_telemetry({'type': 'gps', 'lat': 55.7, 'lon': 37.6, 'alt': 100.0,
+                            'heading': 10.0, 'sats': 8})
+    sent = channels.telemetry.send_json.call_args.args[0]
+    assert sent['lat'] == 55.7 and sent['lon'] == 37.6
+
+
 async def test_on_fc_telemetry_no_telemetry_channel_is_silent():
     coord = SessionCoordinator(_make_signal_client(), MagicMock())
     manager = MagicMock(name='manager')

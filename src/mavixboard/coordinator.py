@@ -189,8 +189,19 @@ class SessionCoordinator:
         kind = decoded.get('type')
         try:
             if kind == 'gps':
-                self._last_telemetry['lat'] = float(decoded.get('lat', 0.0))
-                self._last_telemetry['lon'] = float(decoded.get('lon', 0.0))
+                lat = float(decoded.get('lat', 0.0))
+                lon = float(decoded.get('lon', 0.0))
+                # Нет GPS-фикса: полётник до захвата спутников шлёт нулевые
+                # координаты (0°,0° — «Null Island» у берегов Африки). Не
+                # сохраняем и не пробрасываем такую позицию — иначе дрон
+                # «телепортируется» в океан. Признак — нулевые lat/lon
+                # (кросс-протокольно: MAVLink GLOBAL_POSITION_INT не несёт
+                # число спутников, поэтому по sats гейтить нельзя). ATTITUDE-
+                # курс при этом обновляется отдельной веткой.
+                if abs(lat) < 1e-6 and abs(lon) < 1e-6:
+                    return
+                self._last_telemetry['lat'] = lat
+                self._last_telemetry['lon'] = lon
                 self._last_telemetry['alt'] = float(decoded.get('alt', 0.0))
                 self._last_telemetry['sats'] = int(decoded.get('sats', 0))
                 heading = float(decoded.get('heading', 0.0))
