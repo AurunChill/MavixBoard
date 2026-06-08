@@ -1,339 +1,97 @@
 # MavixBoard — Техническое описание
 
-Документ составлен в соответствии с ГОСТ 19.402-78 «Описание программы» и
-ГОСТ 19.503-79 «Руководство системного программиста».
-
----
+Документ составлен по ГОСТ 19.402-78 «Описание программы» (ЕСПД).
 
 ## 1. Аннотация
 
-Документ содержит техническое описание бортового программного обеспечения
-«MavixBoard» — компонента системы дистанционного управления БПЛА «Mavix»,
-устанавливаемого на бортовом компьютере (как правило — Raspberry Pi 4).
-Предназначен для разработчиков и инженеров, осуществляющих сборку,
-установку, настройку и сопровождение программы.
-
----
+MavixBoard — бортовая часть системы доставки грузов дронами Mavix, работающая на
+Raspberry Pi. Стримит видео с камер оператору по WebRTC, принимает команды
+управления по data-каналу и пробрасывает их на полётный контроллер (CRSF или
+MAVLink), отдаёт телеметрию (GPS/курс/батарея), исполняет сброс груза (AUX-канал)
+и самостоятельно регистрируется на сервере (enrollment).
 
 ## 2. Общие сведения
 
-### 2.1. Наименование
-
-Полное наименование: «Бортовое ПО Mavix» (MavixBoard).
-Условное обозначение: `mavixboard`.
-Версия: 0.1.0.
-
-### 2.2. Программное обеспечение
-
-| Компонент | Версия |
-|---|---|
-| Язык программирования | Python ≥ 3.11 |
-| Среда выполнения | GNU/Linux (Raspberry Pi OS / Ubuntu 24.04) |
-| GStreamer + GstWebRTC | 1.22+ |
-| PyGObject | 3.44+ |
-| aiohttp | 3.9+ |
-| websockets | 12.0+ |
-| pyserial / pyserial-asyncio | 3.5+ / 0.6+ |
-| pymavlink | 2.4+ |
-| ASGI / асинхронность | asyncio |
-
-### 2.3. Назначение
-
-Программа обеспечивает:
-
-- захват видео с подключённых USB-камер (UVC);
-- кодирование видеопотоков в формат H.264;
-- передачу видеопотоков по технологии WebRTC наземной станции;
-- двунаправленный обмен пакетами с полётным контроллером по
-  протоколам MAVLink или CRSF;
-- автоматическое подключение к серверу сигнализации и поддержание
-  соединения с экспоненциальной задержкой при разрывах.
-
----
+- **Наименование:** MavixBoard.
+- **Стек:** Python 3.12, GStreamer (`webrtcbin`, libnice), PyGObject, asyncio,
+  websockets; ОС — Ubuntu на Raspberry Pi.
+- **Связь:** WebSocket-сигналинг с MavixServer; WebRTC P2P (видео + data-каналы)
+  с MavixDesktop; UART/USB — с полётным контроллером.
 
 ## 3. Функциональное назначение
 
-### 3.1. Класс решаемых задач
-
-Программа реализует роль предложителя (offerer) в WebRTC-сессии:
-формирует медиа-канал и три data-канала (`packet-channel`, `ping-channel`,
-`config-channel`), направляет SDP-оффер наземной станции через сервер
-сигнализации, ожидает ответ.
-
-### 3.2. Сведения о функциональных ограничениях
-
-- Одновременно поддерживается одна активная сессия с одной наземной
-  станцией.
-- Программа предполагает наличие сетевого подключения к серверу
-  сигнализации.
-- При обнаружении ошибки GStreamer-конвейера сессия принудительно
-  завершается; повторное подключение инициируется наземной станцией.
-
----
+- Захват видео с камер (USB/CSI), кодирование H.264, передача по WebRTC.
+- Приём RC-команд по packet-каналу, проброс на FC (CRSF 420000 бод / MAVLink).
+- Декодирование телеметрии FC (GPS, курс, батарея) и отправка оператору.
+- Сброс груза по AUX-каналу (CH8) и уведомление.
+- Самостоятельная регистрация (enrollment) по ADMIN_ID + ENROLLMENT_TOKEN,
+  генерация DRONE_ID и сохранение идентичности в env.
 
 ## 4. Описание логической структуры
 
-### 4.1. Структура каталогов
+`SessionCoordinator` владеет жизненным циклом сессии: создаёт `GStreamerPipe`
+(пайплайн `webrtcbin`), `WebRTCManager` (сессия), который композирует
+`PeerSession` (сигналинг offer/answer/ICE) и `DataChannelHub` (каналы
+packet/ping/config/telemetry); `FCService` — связь с полётным контроллером.
 
-```
-src/mavixboard/
-├── core/
-│   ├── config.py        # Загрузка преcет‑окружения, параметры
-│   ├── logger.py        # Журналирование (консоль + файл)
-│   └── backoff.py       # Экспоненциальная задержка переподключения
-├── server/
-│   └── signal_client.py # WebSocket-клиент к серверу сигнализации
-├── webrtc/
-│   ├── peer.py          # PeerSession — управление одной WebRTC-сессией
-│   ├── manager.py       # WebRTCManager — оркестрация PeerSession и каналов
-│   └── channels.py      # PacketChannel, PingChannel, ConfigChannel
-├── gstreamer/
-│   ├── pipeline.py      # Построение GStreamer-конвейера
-│   ├── gstreamer.py     # GStreamerPipe — обёртка над gst_parse_launch
-│   ├── camera.py        # Перечисление и описание камер
-│   └── watcher.py       # Слежение за подключёнными камерами
-├── fc/
-│   ├── crsf.py          # Реализация протокола CRSF
-│   ├── mavlink.py       # Парсинг сообщений MAVLink
-│   ├── controllers.py   # Контроллеры FC (Mavlink, CRSF)
-│   ├── detect.py        # Автоопределение типа FC
-│   └── service.py       # FCService — единая точка управления FC
-├── coordinator.py       # SessionCoordinator — связь signaling/webrtc/fc
-└── __main__.py          # Точка входа
-```
+![Классы WebRTC-слоя борта](assets/diagrams/class_webrtc.png)
 
-### 4.2. Описание основных модулей
+Установление сессии (offer/answer/ICE через сервер):
 
-#### 4.2.1. Модуль конфигурации (`core/config.py`)
+![Sequence: WebRTC-сессия](assets/diagrams/sequence_webrtc.png)
 
-Загружает значения из:
+Размещение борта в системе:
 
-1. `/etc/mavixboard/preset.env` — конфигурация, «впаянная» при сборке
-   `.tar.gz`-архива (содержит `DRONE_ID`, `DRONE_TOKEN`, `SIGNAL_SERVER_IP`).
-   Загружается без переопределения уже установленных переменных.
-2. Локального `.env` в корне проекта — для разработки.
-   Загружается с переопределением.
-
-Доступ к параметрам — через объект `settings`.
-
-#### 4.2.2. Модуль координатора (`coordinator.py`)
-
-Реализует основной цикл работы:
-
-1. Соединение с сервером сигнализации с экспоненциальной задержкой
-   (`ExponentialBackoff`: 1, 2, 4, 8, 16, 30 секунд).
-2. Прослушивание сообщений и их диспетчеризация по типу.
-3. При получении `connect` от сервера: создание `GStreamerPipe`,
-   `WebRTCManager`, запуск негоциации.
-4. При ошибке конвейера или потере соединения — `teardown` сессии,
-   отправка `disconnect_session` и `error` через `config-channel`.
-
-#### 4.2.3. Модуль WebRTC-сессии (`webrtc/`)
-
-`PeerSession` оборачивает GStreamer-элемент `webrtcbin`:
-
-- регистрирует обработчики сигналов `on-negotiation-needed`,
-  `on-ice-candidate`;
-- асинхронно создаёт SDP-оффер;
-- применяет SDP-ответ;
-- передаёт ICE-кандидаты в очередь, откуда они забираются
-  «насосами» (pump_ice, pump_offer) и отправляются в сигнализацию.
-
-`WebRTCManager` управляет одной активной сессией. Создаёт
-`DataChannelHub`, привязывает FC-канал к `FCService`, отправляет
-информацию о FC и список камер в `config-channel` при его открытии.
-
-#### 4.2.4. Модуль связи с полётным контроллером (`fc/`)
-
-`FCService.start()` запускает асинхронный цикл поиска FC по перечню
-последовательных портов. Применяются последовательно:
-
-1. `MavlinkController` — попытка получить heartbeat по протоколу
-   MAVLink (через `pymavlink`).
-2. `CrsfController` — попытка получить кадр CRSF.
-
-При успехе сервис устанавливает обнаруженный `FlightController` и
-начинает приём/передачу пакетов. При обрыве — повторно сканирует
-порты.
-
-Передача пакетов:
-
-- от FC к наземной станции: `FCService.on_packet_to_gcs` →
-  `PacketChannel.send_bytes`;
-- от наземной станции к FC: `PacketChannel.on_packet` →
-  `FCService.send`.
-
-#### 4.2.5. Модуль GStreamer-конвейера (`gstreamer/`)
-
-`PipelineBuilder` формирует строку конвейера вида:
-
-```
-webrtcbin name=webrtc bundle-policy=max-bundle stun-server=<...> [turn-server=<...>]
-  v4l2src device=/dev/video0 ! ... ! x264enc ! rtph264pay ! webrtc.sink_0
-  [v4l2src device=/dev/video1 ! ...]
-```
-
-`CameraManager.get_cameras()` возвращает список доступных камер с
-их параметрами; `CameraWatcher` периодически сканирует устройства
-и при изменении уведомляет координатор.
-
-### 4.3. Протокол data-каналов
-
-Программа открывает три канала:
-
-| Канал | Параметры | Назначение |
-|---|---|---|
-| `packet-channel` | `ordered=true`, `max-retransmits=2`, `bitrate=6000000` | Передача пакетов FC |
-| `ping-channel` | `ordered=true`, `max-retransmits=2` | Эхо-ответы для измерения задержки |
-| `config-channel` | `ordered=true` | Управляющие JSON-сообщения |
-
-В `config-channel` циркулируют сообщения:
-
-| Тип | Направление | Содержимое |
-|---|---|---|
-| `fc` | дрон → GCS | `kind`, `name` |
-| `cameras` | дрон → GCS | список объектов с `device_index`, `name`, `bitrate_kbs`, `params`, `param_index` |
-| `cameras_changed` | дрон → GCS | `device_indices` |
-| `error` | дрон → GCS | `message` |
-| `bitrate` | GCS → дрон | `updates: [{device_index, bitrate_kbs}]` |
-| `reboot` | GCS → дрон | — |
-
----
+![Развёртывание](assets/diagrams/deployment.png)
 
 ## 5. Используемые технические средства
 
-### 5.1. Минимальные требования
-
-| Параметр | Значение |
-|---|---|
-| Бортовой компьютер | Raspberry Pi 4 (4 ГБ) или сопоставимый ARM/x86_64 |
-| ОЗУ | 1 ГБ свободной |
-| ОС | Raspberry Pi OS (Bookworm) или Ubuntu 24.04 |
-| Камера | USB-вебкамера с поддержкой H.264 или YUYV/MJPEG ≥ 320×240 |
-| Полётный контроллер | ArduPilot, PX4 (MAVLink) или TBS/RX (CRSF) |
-| Соединение | UART через `/dev/ttyACM*`, `/dev/ttyUSB*`, `/dev/ttyAMA*` |
-| Сеть | Wi-Fi, LTE-модем или Ethernet |
-
-### 5.2. Зависимости системного уровня
-
-```
-python3 ≥ 3.11, python3-venv, python3-pip
-python3-gi
-gir1.2-gst-plugins-bad-1.0
-gstreamer1.0-tools / -plugins-base / -plugins-good / -plugins-bad / -plugins-ugly / -libav
-gstreamer1.0-nice
-v4l-utils
-```
-
-Полный перечень содержится в скрипте `install.sh` устанавливаемого
-`.tar.gz`-архива (вызовы `apt-get install`).
-
----
+Raspberry Pi (Ubuntu), GStreamer с плагинами (base/good/bad/ugly/libav/nice/
+libcamera), Python 3.12 + PyGObject. Полётный контроллер (Betaflight/iNav/
+ArduPilot/PX4), камеры USB/CSI. Подробная подготовка железа, UART и **прав на
+порты** — [HARDWARE_SETUP.md](HARDWARE_SETUP.md).
 
 ## 6. Установка и настройка
 
-### 6.1. Установка через `.tar.gz`-архив
-
-Рекомендуемый способ. Архив получается от сервера «MavixServer»
-обращением:
-
-```
-GET https://<server>/api/v1/builds/board?drone_id=<id>
-Authorization: Bearer <access_token>
-```
-
-Установка на дроне:
-
-```bash
-tar -xzf mavixboard-<id>.tar.gz
-cd mavixboard-<id>
-sudo ./install.sh
-sudo systemctl enable --now mavixboard.service
-```
-
-В процессе установки:
-
-- ставятся системные зависимости через `apt-get`;
-- создаётся виртуальное окружение `/opt/mavixboard/.venv` с доступом
-  к системным пакетам (`--system-site-packages`);
-- зависимости Python устанавливаются из локальных wheel-файлов,
-  входящих в архив (без обращения в интернет);
-- регистрируется и запускается systemd-служба `mavixboard.service`.
-
-### 6.2. Установка для разработки
-
-```bash
-git clone https://github.com/AurunChill/MavixBoard.git
-cd MavixBoard
-python3 -m venv .venv
-.venv/bin/pip install -e ".[dev]"
-cp .env-example .env
-# Отредактировать .env
-.venv/bin/python -m mavixboard
-```
-
-### 6.3. Параметры конфигурации
-
-| Переменная | Назначение | Значение по умолчанию |
-|---|---|---|
-| `SIGNAL_SERVER_IP` | URL сервера сигнализации | `http://localhost` |
-| `SIGNAL_WS_URL` | Полный URL WebSocket (если иной путь) | пусто |
-| `DRONE_ID` | Идентификатор дрона (выдаётся сервером) | пусто |
-| `DRONE_TOKEN` | Токен дрона для WS-авторизации (выдаётся сервером) | пусто |
-| `STUN_SERVER` | URL STUN-сервера | `stun://localhost:3478` |
-| `TURN_SERVER` | URL TURN-сервера | пусто |
-
-При установке через `.tar.gz` параметры `USER_ID`, `DRONE_TOKEN`,
-`SIGNAL_SERVER_IP` записываются в `/etc/mavixboard/preset.env` сервером
-автоматически (на этапе сборки архива).
-
----
+1. Подготовить RPi, UART и FC по [HARDWARE_SETUP.md](HARDWARE_SETUP.md).
+2. Поставить системные GStreamer-зависимости (там же, §1.6) и Python-пакеты.
+3. В env задать `ADMIN_ID` и `ENROLLMENT_TOKEN` (из кабинета администратора).
+   При первом запуске борт регистрируется и дописывает `DRONE_ID`/`DRONE_TOKEN`.
+4. Автозапуск — systemd-юнит (см. HARDWARE_SETUP §1.8), группы `dialout video`.
 
 ## 7. Проверка работы
 
-### 7.1. Автоматизированные тесты
-
 ```bash
-.venv/bin/pytest
-# Ожидаемый результат: 303 passed
+python -m pytest -q        # полный набор тестов борта — зелёный
+python3 -m fc              # диагностика FC: тип, имя, пакеты/сек
 ```
-
-### 7.2. Тестирование без аппаратного обеспечения
-
-При запуске без камер и без полётного контроллера программа:
-
-- успешно подключается к серверу сигнализации;
-- получает запрос `connect`;
-- сообщает об отсутствии камер в журнале и не открывает сессию;
-- продолжает ожидание новых запросов.
-
-### 7.3. Состояние службы
-
-```bash
-sudo systemctl status mavixboard
-journalctl -u mavixboard -f
-```
-
----
 
 ## 8. Сообщения системному программисту
 
-| Сообщение | Причина | Действия |
-|---|---|---|
-| `cameras not found` | Не обнаружены устройства `/dev/video*` | Проверить подключение камер, права на устройства (`v4l2-ctl --list-devices`) |
-| `[signal] connect error: ...` | Невозможно соединиться с сервером | Проверить сетевую доступность, корректность `SIGNAL_SERVER_IP` |
-| `[coord] pipeline error` | Сбой GStreamer-конвейера | Просмотреть журнал на наличие диагностики GStreamer; убедиться в исправности камер |
-| `[fc-service] FC disconnected` | Полётный контроллер не отвечает | Проверить кабель UART, права на `/dev/ttyACM*` |
-| `[manager] session already active` | Получен повторный `connect` | Штатная ситуация при перезаключении; сессия будет пересоздана |
-| `[coord] reboot requested via config channel` | Получена команда `reboot` от наземной станции | Программа перезапускается через `os.execv` |
-
----
+- `Namespace GstWebRTC not available` → не установлен `gir1.2-gst-plugins-bad-1.0`.
+- Нет offer от борта → проверить `latency=0` на `webrtcbin` до `PLAYING`.
+- RXLOSS / FC не армится → провода TX↔RX, `disable-bt`, права на порт — см. HARDWARE_SETUP §3.
+- Нет relay-кандидатов → проверить TURN (формат URL, креды) — см. WEBRTC_TURN_NOTES.
 
 ## 9. Журналирование
 
-Журнал ведётся в стандартный поток вывода (виден через `journalctl`)
-и в файл `~/.config/mavixboard/logs/mavixboard_<дата>.log`.
+Логи (stdout + файл) с префиксами `[coord]`, `[manager]`, `[peer]`, `[gst]`,
+`[ice]`, `[transmit]`, `[mavlink]`. Человекочитаемый текст — на русском.
 
-Уровни сообщений: `INFO`, `WARNING`, `ERROR`. Уровень `INFO`
-используется для отслеживания фаз работы (подключение, открытие
-канала, получение FC-пакета).
+## 10. Сложности и принятые решения
+
+- **Дедлок при teardown (gupnp-igd).** Финальный unref `webrtcbin` освобождал
+  ICE-агент libnice, чей финализатор gupnp-igd (UPnP) вставал в `g_cond_wait` без
+  таймаута — на потоке asyncio-loop весь борт зависал. Решение: отключаем UPnP в
+  ICE-агенте и изолируем разбор пайплайна в отдельный daemon-поток
+  (`gstreamer.py::_disable_upnp`, `coordinator.py::_release_pipeline`).
+- **Совместимость aiortc ↔ webrtcbin и TURN/ICE** (trickle-кандидаты, relay_patch,
+  force_relay, DTLS `setup:passive`) — подробный разбор в
+  [WEBRTC_TURN_NOTES.md](WEBRTC_TURN_NOTES.md).
+- **GPS без фикса.** Полётник до захвата спутников шлёт нулевые координаты
+  (0°,0°). `_forward_telemetry` не пробрасывает такую позицию (иначе дрон
+  «телепортируется» в океан); по числу спутников гейтить нельзя — MAVLink
+  `GLOBAL_POSITION_INT` его не несёт.
+- **GLib + asyncio.** Bus-watch и сигналы `webrtcbin` срабатывают только при
+  работающем `GLib.MainLoop` — он крутится в отдельном daemon-потоке
+  (`core/glib_loop.py`).
