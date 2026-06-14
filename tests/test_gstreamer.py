@@ -13,6 +13,7 @@ from mavixboard.gstreamer.camera import (
     CameraParams,
     CameraRegistry,
     V4l2Scanner,
+    _select_resolution_indices,
     _strip_usb_path,
 )
 from mavixboard.gstreamer.gstreamer import GStreamerPipe
@@ -254,6 +255,38 @@ class TestV4l2Scanner:
         assert isinstance(params, set)
 
 
+#### Выборка разрешений ################################################################
+class TestSelectResolutionIndices:
+    def test_empty(self):
+        assert _select_resolution_indices(0) == []
+
+    def test_one(self):
+        assert _select_resolution_indices(1) == [0]
+
+    def test_two_takes_both(self):
+        assert _select_resolution_indices(2) == [0, 1]
+
+    def test_three_takes_endpoints_only(self):
+        assert _select_resolution_indices(3) == [0, 2]
+
+    def test_five_takes_endpoints_only(self):
+        assert _select_resolution_indices(5) == [0, 4]
+
+    def test_ten_picks_endpoints_and_two_middles(self):
+        # пример из ТЗ: 10 разрешений → 0,9 (концы) + 3,6 (равномерные середины)
+        assert _select_resolution_indices(10) == [0, 3, 6, 9]
+
+    def test_twenty_picks_eight_evenly(self):
+        assert _select_resolution_indices(20) == [0, 3, 5, 8, 11, 14, 16, 19]
+
+    def test_always_includes_endpoints(self):
+        for n in range(3, 60):
+            idx = _select_resolution_indices(n)
+            assert idx[0] == 0
+            assert idx[-1] == n - 1
+            assert idx == sorted(set(idx))  # отсортировано и без дублей
+
+
 #### CameraCalibrator ##################################################################
 def _make_gst_mock(set_state_return, get_state_return):
     import mavixboard.gstreamer.camera as cam_module
@@ -314,6 +347,24 @@ class TestCameraCalibrator:
         raw = {(640, 480, 30, 'YUYV'), (640, 480, 30, 'MJPG')}
         result = CameraCalibrator.calibrate(0, raw)
         assert len(result) == 1
+
+    def test_calibrate_probes_only_selected_resolutions(self):
+        import mavixboard.gstreamer.camera as cam_module
+        Gst = cam_module.Gst
+        pipeline = MagicMock()
+        Gst.parse_launch.return_value = pipeline
+        pipeline.set_state.return_value = 'not_failure'
+        pipeline.get_state.return_value = (
+            Gst.StateChangeReturn.SUCCESS,
+            Gst.State.PLAYING,
+            None,
+        )
+        # 10 разрешений (по возрастанию площади), по одному fps на каждое.
+        raw = {(100 * i, 100, 30, 'YUYV') for i in range(1, 11)}
+        result = CameraCalibrator.calibrate(0, raw)
+        # выбираются индексы [0,3,6,9] → ширины 100,400,700,1000
+        got = {(p.width, p.height) for p in result}
+        assert got == {(100, 100), (400, 100), (700, 100), (1000, 100)}
 
     def test_calibrate_handles_exception_gracefully(self):
         import mavixboard.gstreamer.camera as cam_module
