@@ -109,7 +109,9 @@ src/mavixboard/
 Загружает значения из:
 
 1. `/etc/mavixboard/preset.env` — конфигурация, «впаянная» при сборке
-   `.tar.gz`-архива (содержит `DRONE_ID`, `DRONE_TOKEN`, `SIGNAL_SERVER_IP`).
+   `.tar.gz`-архива (содержит `ADMIN_ID`, `ENROLLMENT_TOKEN`,
+   `SIGNAL_SERVER_IP`). При первом запуске board саморегистрируется и
+   дописывает сюда `DRONE_ID`/`DRONE_TOKEN`/`DRONE_NAME` (см. §саморегистрация).
    Загружается без переопределения уже установленных переменных.
 2. Локального `.env` в корне проекта — для разработки.
    Загружается с переопределением.
@@ -288,14 +290,24 @@ cp .env-example .env
 |---|---|---|
 | `SIGNAL_SERVER_IP` | URL сервера сигнализации | `http://localhost` |
 | `SIGNAL_WS_URL` | Полный URL WebSocket (если иной путь) | пусто |
-| `DRONE_ID` | Идентификатор дрона (выдаётся сервером) | пусто |
-| `DRONE_TOKEN` | Токен дрона для WS-авторизации (выдаётся сервером) | пусто |
+| `ADMIN_ID` | Идентификатор владельца для саморегистрации (впаивается в архив) | пусто |
+| `ENROLLMENT_TOKEN` | Токен саморегистрации владельца (впаивается в архив) | пусто |
+| `DRONE_ID` | Идентификатор дрона (генерируется самим board при enroll) | пусто |
+| `DRONE_TOKEN` | Токен дрона для WS-авторизации (выдаётся сервером при enroll) | пусто |
+| `DRONE_NAME` | Косметическое имя дрона (выдаётся сервером при enroll) | пусто |
 | `STUN_SERVER` | URL STUN-сервера | `stun://localhost:3478` |
 | `TURN_SERVER` | URL TURN-сервера | пусто |
 
-При установке через `.tar.gz` параметры `USER_ID`, `DRONE_TOKEN`,
-`SIGNAL_SERVER_IP` записываются в `/etc/mavixboard/preset.env` сервером
-автоматически (на этапе сборки архива).
+### Саморегистрация (enrollment)
+
+При сборке `.tar.gz` сервер вшивает в `/etc/mavixboard/preset.env` только
+`ADMIN_ID`, `ENROLLMENT_TOKEN` и `SIGNAL_SERVER_IP` — один архив на владельца,
+без привязки к конкретному дрону. При первом запуске `server/enroll.py`
+генерирует `DRONE_ID`, отправляет `POST /api/v1/drones/enroll`
+(`Authorization: Enroll <ENROLLMENT_TOKEN>`), получает персональные
+`DRONE_TOKEN`/`DRONE_NAME` и дописывает их в `preset.env`. На следующих
+запусках саморегистрация пропускается (используется сохранённый токен).
+Поэтому `preset.env` должен быть доступен сервису на запись.
 
 ---
 
