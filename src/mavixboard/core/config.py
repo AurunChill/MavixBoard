@@ -64,13 +64,32 @@ def _resolve_data_dir() -> Path:
     return Path.home() / '.local' / 'share' / 'mavixboard'
 
 
+def _resolve_identity_env_path() -> Path:
+    """Файл, куда board дописывает DRONE_ID/DRONE_TOKEN/DRONE_NAME после
+    саморегистрации.
+
+    На реальном дроне это preset.env (его install.sh делает доступным для
+    записи сервису). При запуске из исходников — ./.env проекта.
+    """
+    if _PRESET_PATH.is_file():
+        return _PRESET_PATH
+    if _PROJECT_ROOT is not None:
+        return _PROJECT_ROOT / '.env'
+    return Path.home() / '.config' / 'mavixboard' / 'preset.env'
+
+
 #### Настройки #########################################################################
 @dataclass
 class Settings:
     signal_server_ip: str = field(default_factory=lambda: os.getenv('SIGNAL_SERVER_IP', 'http://localhost'))
     signal_ws_url: str = field(default_factory=lambda: os.getenv('SIGNAL_WS_URL', ''))
+    # ADMIN_ID + ENROLLMENT_TOKEN вшиваются сервером в preset.env; по ним board
+    # сам регистрируется при первом запуске и получает DRONE_ID/DRONE_TOKEN/NAME.
+    admin_id: str = field(default_factory=lambda: os.getenv('ADMIN_ID', ''))
+    enrollment_token: str = field(default_factory=lambda: os.getenv('ENROLLMENT_TOKEN', ''))
     drone_id: str = field(default_factory=lambda: os.getenv('DRONE_ID', ''))
     drone_token: str = field(default_factory=lambda: os.getenv('DRONE_TOKEN', ''))
+    drone_name: str = field(default_factory=lambda: os.getenv('DRONE_NAME', ''))
     stun_server: str = field(default_factory=lambda: os.getenv('STUN_SERVER', 'stun://stun.l.google.com:19302'))
     turn_server: str = field(default_factory=lambda: os.getenv('TURN_SERVER', ''))
     turn_username: str = field(default_factory=lambda: os.getenv('TURN_USERNAME', ''))
@@ -97,6 +116,7 @@ class Settings:
 
     log_path: Path = field(default_factory=lambda: _resolve_log_dir() / f'mavixboard_{date.today()}.log')
     data_path: Path = field(default_factory=_resolve_data_dir)
+    identity_env_path: Path = field(default_factory=_resolve_identity_env_path)
 
     @property
     def ws_url(self) -> str:
