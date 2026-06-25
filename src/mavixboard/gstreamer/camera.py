@@ -142,13 +142,42 @@ class V4l2Scanner:
 
 
 #### Калибратор ########################################################################
+def _select_resolution_indices(count: int) -> list[int]:
+    """Индексы выборки разрешений для калибровки.
+
+    Всегда включает крайние (минимальное и максимальное по площади), плюс
+    равномерно распределённые «середины» в количестве round(count*0.4 - 2).
+    Калибровка перебирает не все разрешения, а representative-выборку — это
+    кратно сокращает число проб GStreamer (fps внутри выбранного разрешения
+    перебираются как прежде)."""
+    if count <= 0:
+        return []
+    if count <= 2:
+        return list(range(count))
+    middles = max(0, round(count * 0.4 - 2))
+    indices = {0, count - 1}
+    for i in range(1, middles + 1):
+        indices.add(round(i * (count - 1) / (middles + 1)))
+    return sorted(indices)
+
+
 class CameraCalibrator:
     @staticmethod
     def calibrate(device_index: int, raw_params: set[tuple[int, int, int, str]]) -> list[CameraParams]:
         logger.info('[camera] запускаю калибровку камеры')
         supported_params: list[CameraParams] = []
         seen: set[tuple[int, int, int]] = set()
+        # Пробуем не все разрешения, а representative-выборку (min, max и
+        # равномерные середины), чтобы кратно сократить число проб GStreamer.
+        # Внутри каждого выбранного разрешения fps перебираются как прежде.
+        resolutions = sorted(
+            {(w, h) for w, h, _, _ in raw_params},
+            key=lambda wh: (wh[0] * wh[1], wh[0], wh[1]),
+        )
+        selected = {resolutions[i] for i in _select_resolution_indices(len(resolutions))}
         for width, height, fps, format_ in raw_params:
+            if (width, height) not in selected:
+                continue
             key = (width, height, fps)
             if key in seen:
                 continue
